@@ -28,8 +28,8 @@ class BinanceConfig:
 class RateLimitConfig:
     """Конфигурация ограничения запросов."""
     global_limit: int = 30
-    global_interval: float = 1.0
-    user_message_interval: float = 1.0
+    global_interval: float = 1.01
+    user_message_interval: float = 1.01
     max_messages_per_batch: int = 50  # Добавлен недостающий атрибут
 
 
