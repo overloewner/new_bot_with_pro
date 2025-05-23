@@ -1,0 +1,19 @@
+# Core dependencies
+aiogram==3.4.1
+aiohttp==3.9.1
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.25
+orjson==3.9.12
+
+# Database
+alembic==1.13.1
+
+# Utils
+python-dotenv==1.0.0
+
+# Development (optional)
+pytest==7.4.4
+pytest-asyncio==0.23.2
+black==23.12.1
+isort==5.13.2
+flake8==7.0.0
