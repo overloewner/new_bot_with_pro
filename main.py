@@ -52,7 +52,7 @@ class Application:
         self.dp = Dispatcher()
         
         # Инициализируем базу данных
-        self.db_manager = DatabaseManager(self.config.database.url)
+        self.db_manager = DatabaseManager(self.config.database)
         await self.db_manager.initialize()
         
         # Регистрируем сервисы в контейнере
@@ -69,15 +69,7 @@ class Application:
     async def _setup_services(self) -> None:
         """Настройка сервисов и их регистрация в контейнере."""
         
-        # Создаем сессию для репозиториев
-        session_factory = self.db_manager.async_session
-        
-        # Создаем сервисы
-        user_repository = UserRepository(await session_factory().__anext__())
-        preset_repository = PresetRepository(await session_factory().__anext__())
-        
-        user_service = UserService(user_repository)
-        preset_service = PresetService(preset_repository)
+        # Создаем сервис токенов
         token_service = TokenService(self.config.token)
         
         # Создаем сервис алертов
@@ -87,8 +79,8 @@ class Application:
             self.config.rate_limit
         )
         
-        # Создаем основное хранилище
-        self.storage = Storage(user_service, preset_service, token_service)
+        # Создаем основное хранилище с новой архитектурой
+        self.storage = Storage(self.db_manager, token_service)
         await self.storage.initialize()
         
         # Создаем сервис обработки свечей
@@ -119,6 +111,9 @@ class Application:
         logger.info("Starting application...")
         
         try:
+            # Удаляем webhook, если он активен
+            await self._delete_webhook()
+            
             # Обновляем список токенов
             await self._update_tokens()
             
@@ -162,11 +157,28 @@ class Application:
         if self.websocket_client:
             await self.websocket_client.stop()
         
+        # Закрываем соединения БД
+        if self.db_manager:
+            await self.db_manager.close()
+        
         # Закрываем бота
         if self.bot:
             await self.bot.session.close()
         
         logger.info("Application stopped")
+    
+    async def _delete_webhook(self) -> None:
+        """Удаление webhook, если он активен."""
+        try:
+            webhook_info = await self.bot.get_webhook_info()
+            if webhook_info.url:
+                logger.info(f"Deleting webhook: {webhook_info.url}")
+                await self.bot.delete_webhook(drop_pending_updates=True)
+                logger.info("Webhook deleted successfully")
+            else:
+                logger.info("No webhook active")
+        except Exception as e:
+            logger.warning(f"Error deleting webhook: {e}")
     
     async def _update_tokens(self) -> None:
         """Обновление списка токенов."""

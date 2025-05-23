@@ -157,11 +157,48 @@ class CandleService:
             if not subscriptions:
                 return
             
-            # Отправляем в сервис алертов
-            await self.alert_service.process_candle_alert(candle_data, subscriptions)
+            # Фильтруем подписки по процентному изменению
+            filtered_subscriptions = await self._filter_subscriptions_by_change(
+                candle_data, subscriptions
+            )
+            
+            if not filtered_subscriptions:
+                return
+            
+            # Отправляем в сервис алертов только если есть подходящие подписки
+            await self.alert_service.process_candle_alert(candle_data, filtered_subscriptions)
             
         except Exception as e:
             logger.error(f"Error processing candle {candle_data}: {e}")
+    
+    async def _filter_subscriptions_by_change(
+        self, 
+        candle_data: Dict[str, Any], 
+        subscriptions: Dict[int, Set[str]]
+    ) -> Dict[int, Set[str]]:
+        """Фильтрация подписок по процентному изменению цены."""
+        from bot.utils.price_analyzer import PriceAnalyzer
+        
+        analyzer = PriceAnalyzer()
+        analysis = analyzer.analyze_candle(candle_data)
+        price_change_abs = abs(float(analysis['price_change']))
+        
+        filtered = {}
+        
+        for user_id, preset_ids in subscriptions.items():
+            user_data = await self.storage.get_user_data(user_id)
+            
+            # Проверяем каждый пресет пользователя
+            valid_presets = set()
+            for preset_id in preset_ids:
+                preset = user_data.get("presets", {}).get(preset_id)
+                if preset and price_change_abs >= preset["percent"]:
+                    valid_presets.add(preset_id)
+            
+            if valid_presets:
+                filtered[user_id] = valid_presets
+        
+        return filtered
     
     async def _monitor_queues(self) -> None:
         """Мониторинг состояния очередей."""
@@ -171,11 +208,16 @@ class CandleService:
                 candle_queue_size = self._candle_queue.qsize()
                 alert_stats = self.alert_service.get_queue_stats()
                 
+                # Логируем статистику каждую минуту
                 logger.info(
                     f"Queue stats - Candles: {candle_queue_size}, "
                     f"Alert users: {alert_stats['active_users']}, "
                     f"Alert messages: {alert_stats['total_queued_messages']}"
                 )
+                
+                # Если очереди переполнены, принимаем меры
+                if alert_stats['total_queued_messages'] > 10000:
+                    logger.warning("Alert queues overloaded, consider optimizing")
                 
                 await asyncio.sleep(60)  # Мониторинг каждую минуту
                 

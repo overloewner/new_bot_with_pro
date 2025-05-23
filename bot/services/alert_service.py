@@ -25,6 +25,7 @@ class AlertService:
     ):
         self.bot = bot
         self.processing_config = processing_config
+        self.rate_limit_config = rate_limit_config
         self.analyzer = PriceAnalyzer()
         
         # Ограничители запросов
@@ -136,8 +137,14 @@ class AlertService:
                 messages = []
                 queue = self._user_queues[user_id]
                 
-                while (len(messages) < self.processing_config.max_messages_per_batch 
-                       and not queue.empty()):
+                # Используем правильный атрибут из конфигурации
+                max_messages = getattr(
+                    self.processing_config, 
+                    'max_messages_per_batch', 
+                    50  # значение по умолчанию
+                )
+                
+                while (len(messages) < max_messages and not queue.empty()):
                     try:
                         message = await asyncio.wait_for(queue.get(), timeout=0.1)
                         messages.append(message)
@@ -153,6 +160,9 @@ class AlertService:
                 sleep_time = max(0, self.processing_config.batch_timeout - elapsed)
                 if sleep_time > 0:
                     await asyncio.sleep(sleep_time)
+                else:
+                    # Короткая пауза, чтобы не блокировать event loop
+                    await asyncio.sleep(0.01)
                 
             except asyncio.CancelledError:
                 logger.debug(f"Alert flush task cancelled for user {user_id}")
@@ -169,7 +179,14 @@ class AlertService:
             await self.user_rate_limiter.wait_for_user(user_id)
             
             # Формируем итоговое сообщение
-            batch_message = "🚨 Алерты:\n" + "\n".join(messages)
+            if len(messages) == 1:
+                batch_message = messages[0]
+            else:
+                batch_message = f"🚨 Алерты ({len(messages)}):\n" + "\n".join(messages)
+            
+            # Ограничиваем длину сообщения для Telegram (максимум 4096 символов)
+            if len(batch_message) > 4000:
+                batch_message = batch_message[:4000] + "\n... (сообщение обрезано)"
             
             # Отправляем
             await self.bot.send_message(chat_id=user_id, text=batch_message)

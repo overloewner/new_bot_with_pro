@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.services.user_service import UserService
 from bot.services.preset_service import PresetService
 from bot.services.token_service import TokenService
+from bot.db.database import DatabaseManager
 from bot.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,12 +26,10 @@ class Storage:
     
     def __init__(
         self, 
-        user_service: UserService,
-        preset_service: PresetService, 
+        db_manager: DatabaseManager,
         token_service: TokenService
     ):
-        self.user_service = user_service
-        self.preset_service = preset_service
+        self.db_manager = db_manager
         self.token_service = token_service
         
         # Кеш данных пользователей
@@ -46,11 +45,32 @@ class Storage:
             # Инициализируем сервис токенов
             await self.token_service.initialize()
             
-            # Загружаем данные пользователей
-            users_data = await self.user_service.get_all_users_data()
+            # Загружаем данные пользователей и пресетов
+            await self._load_all_data()
             
-            # Загружаем данные пресетов
-            presets_data = await self.preset_service.get_all_presets_data()
+            # Восстанавливаем подписки
+            await self._restore_user_subscriptions()
+            
+            logger.info(f"Storage initialized with {len(self._users_data)} users")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize storage: {e}")
+            raise
+    
+    async def _load_all_data(self) -> None:
+        """Загрузка всех данных из БД."""
+        async with self.db_manager.get_session() as session:
+            from bot.db.repositories.user_repository import UserRepository
+            from bot.db.repositories.preset_repository import PresetRepository
+            
+            user_repo = UserRepository(session)
+            preset_repo = PresetRepository(session)
+            
+            # Загружаем пользователей
+            users_data = await user_repo.get_all_users_data()
+            
+            # Загружаем пресеты
+            presets_data = await preset_repo.get_all_presets_data()
             
             # Объединяем данные
             self._users_data = users_data
@@ -62,74 +82,113 @@ class Storage:
                         "is_running": False,
                         **preset_info
                     }
-            
-            # Восстанавливаем подписки
-            await self._restore_user_subscriptions()
-            
-            logger.info(f"Storage initialized with {len(self._users_data)} users")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize storage: {e}")
-            raise
     
     async def get_user_data(self, user_id: int) -> Dict[str, Any]:
         """Получение данных пользователя."""
         if user_id not in self._users_data:
-            # Создаем пользователя через сервис
-            user_data = await self.user_service.get_user_data(user_id)
-            presets = await self.preset_service.get_user_presets(user_id)
-            active_presets = await self.preset_service.get_active_presets(user_id)
-            
-            self._users_data[user_id] = {
-                **user_data,
-                "presets": presets,
-                "active_presets": active_presets
-            }
+            # Создаем пользователя
+            async with self.db_manager.get_session() as session:
+                from bot.db.repositories.user_repository import UserRepository
+                from bot.db.repositories.preset_repository import PresetRepository
+                
+                user_repo = UserRepository(session)
+                preset_repo = PresetRepository(session)
+                
+                # Проверяем существование пользователя
+                user = await user_repo.get_by_user_id(user_id)
+                if not user:
+                    user = await user_repo.create_user(user_id)
+                
+                # Загружаем пресеты
+                presets = await preset_repo.get_by_user_id(user_id)
+                active_presets = await preset_repo.get_active_by_user_id(user_id)
+                
+                presets_dict = {}
+                active_preset_ids = set()
+                
+                for preset in presets:
+                    import json
+                    preset_id_str = str(preset.preset_id)
+                    presets_dict[preset_id_str] = {
+                        "preset_name": preset.preset_name,
+                        "pairs": json.loads(preset.pairs),
+                        "interval": preset.interval,
+                        "percent": preset.percent
+                    }
+                    if preset.is_active:
+                        active_preset_ids.add(preset_id_str)
+                
+                self._users_data[user_id] = {
+                    "is_running": user.is_running,
+                    "presets": presets_dict,
+                    "active_presets": active_preset_ids
+                }
         
         return self._users_data[user_id]
     
     async def update_user_running_status(self, user_id: int, is_running: bool) -> bool:
         """Обновление статуса запуска пользователя."""
-        success = await self.user_service.update_running_status(user_id, is_running)
-        if success and user_id in self._users_data:
-            self._users_data[user_id]["is_running"] = is_running
-        return success
+        async with self.db_manager.get_session() as session:
+            from bot.db.repositories.user_repository import UserRepository
+            user_repo = UserRepository(session)
+            success = await user_repo.update_running_status(user_id, is_running)
+            
+            if success and user_id in self._users_data:
+                self._users_data[user_id]["is_running"] = is_running
+            return success
     
     async def add_preset(self, user_id: int, preset_id: str, preset_data: Dict[str, Any]) -> None:
         """Добавление пресета."""
-        # Создаем через сервис (preset_id будет сгенерирован автоматически)
-        actual_preset_id = await self.preset_service.create_preset(user_id, preset_data)
-        
-        # Обновляем кеш
-        user_data = await self.get_user_data(user_id)
-        user_data["presets"][actual_preset_id] = preset_data
-        
-        logger.info(f"Added preset {actual_preset_id} for user {user_id}")
+        async with self.db_manager.get_session() as session:
+            from bot.db.repositories.preset_repository import PresetRepository
+            preset_repo = PresetRepository(session)
+            
+            # Создаем пресет в БД
+            preset = await preset_repo.create_preset(user_id, preset_data)
+            actual_preset_id = str(preset.preset_id)
+            
+            # Обновляем кеш
+            user_data = await self.get_user_data(user_id)
+            user_data["presets"][actual_preset_id] = preset_data
+            
+            logger.info(f"Added preset {actual_preset_id} for user {user_id}")
     
     async def activate_preset(self, user_id: int, preset_id: str) -> bool:
         """Активация пресета."""
-        success = await self.preset_service.activate_preset(user_id, preset_id)
-        if success:
-            user_data = await self.get_user_data(user_id)
-            user_data["active_presets"].add(preset_id)
-        return success
+        async with self.db_manager.get_session() as session:
+            from bot.db.repositories.preset_repository import PresetRepository
+            preset_repo = PresetRepository(session)
+            
+            success = await preset_repo.update_active_status(preset_id, True)
+            if success:
+                user_data = await self.get_user_data(user_id)
+                user_data["active_presets"].add(preset_id)
+            return success
     
     async def deactivate_preset(self, user_id: int, preset_id: str) -> bool:
         """Деактивация пресета."""
-        success = await self.preset_service.deactivate_preset(user_id, preset_id)
-        if success:
-            user_data = await self.get_user_data(user_id)
-            user_data["active_presets"].discard(preset_id)
-        return success
+        async with self.db_manager.get_session() as session:
+            from bot.db.repositories.preset_repository import PresetRepository
+            preset_repo = PresetRepository(session)
+            
+            success = await preset_repo.update_active_status(preset_id, False)
+            if success:
+                user_data = await self.get_user_data(user_id)
+                user_data["active_presets"].discard(preset_id)
+            return success
     
     async def delete_preset(self, user_id: int, preset_id: str) -> bool:
         """Удаление пресета."""
-        success = await self.preset_service.delete_preset(user_id, preset_id)
-        if success:
-            user_data = await self.get_user_data(user_id)
-            user_data["presets"].pop(preset_id, None)
-            user_data["active_presets"].discard(preset_id)
-        return success
+        async with self.db_manager.get_session() as session:
+            from bot.db.repositories.preset_repository import PresetRepository
+            preset_repo = PresetRepository(session)
+            
+            success = await preset_repo.delete_preset(preset_id)
+            if success:
+                user_data = await self.get_user_data(user_id)
+                user_data["presets"].pop(preset_id, None)
+                user_data["active_presets"].discard(preset_id)
+            return success
     
     # Методы работы с подписками
     async def add_subscription(self, key: str, user_id: int, preset_id: str) -> None:
@@ -217,8 +276,3 @@ class Storage:
     async def get_tokens_by_volume(self, min_volume: float):
         """Получение токенов по объему."""
         return await self.token_service.get_tokens_by_volume(min_volume)
-    
-    def update_tokens_cache(self, tokens, last_updated):
-        """Обновление кеша токенов (для совместимости)."""
-        # Этот метод оставляем для совместимости, но логика теперь в TokenService
-        logger.warning("update_tokens_cache called on Storage - consider using TokenService directly")

@@ -30,7 +30,7 @@ class RateLimitConfig:
     global_limit: int = 30
     global_interval: float = 1.0
     user_message_interval: float = 1.0
-    max_messages_per_batch: int = 50
+    max_messages_per_batch: int = 50  # Добавлен недостающий атрибут
 
 
 @dataclass
@@ -40,6 +40,7 @@ class ProcessingConfig:
     batch_size: int = 500
     batch_timeout: float = 0.3
     cooldown_time: int = 60
+    max_messages_per_batch: int = 50  # Добавлен недостающий атрибут
 
 
 @dataclass
@@ -52,7 +53,7 @@ class TokenConfig:
 
     def __post_init__(self):
         if self.timeframes is None:
-            self.timeframes = ["1s", "1m", "5m", "15m", "1h", "4h", "1d"]
+            self.timeframes = [ "1m", "5m", "15m", "1h", "4h", "1d"]
 
 
 @dataclass
@@ -78,7 +79,7 @@ class AppConfig:
     @classmethod
     def from_env(cls) -> "AppConfig":
         """Создает конфигурацию из переменных окружения."""
-        bot_token = os.getenv("BOT_TOKEN", "7877054794:AAEJO3tifLlvGvMawhubEfUcMn609qt30QQ")
+        bot_token = os.getenv("BOT_TOKEN", "7512410143:AAF0MI-LrPVC8JXVhkYO0jtDs2Yn2uSnUlM")
         
         db_url = os.getenv(
             "DATABASE_URL", 
