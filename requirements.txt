@@ -1,19 +1,68 @@
-# Core dependencies
+# requirements.txt
+# Обновленные зависимости для модульного крипто-бота
+
+# Core Telegram bot framework
 aiogram==3.4.1
+
+# HTTP клиент для API запросов
 aiohttp==3.9.1
+
+# База данных
 asyncpg==0.29.0
 sqlalchemy[asyncio]==2.0.25
-orjson==3.9.12
-
-# Database
 alembic==1.13.1
 
-# Utils
+# JSON обработка (быстрее стандартного json)
+orjson==3.9.12
+
+# Конфигурация
 python-dotenv==1.0.0
 
-# Development (optional)
+# Утилиты для работы с датами
+python-dateutil==2.8.2
+
+# Валидация данных
+pydantic==2.5.3
+
+# Логирование и мониторинг
+structlog==23.2.0
+
+# Математические операции (для анализа цен)
+numpy==1.24.4
+
+# Кеширование (опционально, для production)
+redis==5.0.1
+
+# Веб сервер для health checks (опционально)
+fastapi==0.104.1
+uvicorn==0.24.0
+
+# Development dependencies (для разработки)
 pytest==7.4.4
 pytest-asyncio==0.23.2
+pytest-mock==3.12.0
+
+# Code formatting and linting
 black==23.12.1
 isort==5.13.2
 flake8==7.0.0
+mypy==1.8.0
+
+# Дополнительные типы для mypy
+types-python-dateutil==2.8.19.14
+types-redis==4.6.0.11
+
+# Для работы с Ethereum (только если нужно расширение функциональности)
+# web3==6.15.1  # Закомментировано, так как не используется в базовой версии
+
+# Криптографические утилиты (если понадобятся)
+# cryptography==41.0.8  # Закомментировано
+
+# Мониторинг производительности (опционально)
+# psutil==5.9.6  # Для мониторинга системных ресурсов
+
+# Дополнительные утилиты для парсинга и валидации
+validators==0.22.0
+
+# Для работы с временными зонами
+pytz==2023.3
