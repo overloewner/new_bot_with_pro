@@ -2,7 +2,7 @@
 
 import re
 from typing import List, Any
-from bot.core.exceptions import ValidationError
+from ..exceptions import ValidationError
 
 
 class PresetValidator:
@@ -120,3 +120,73 @@ class VolumeValidator:
             raise ValidationError("Volume too large")
         
         return volume
+class BaseValidator:
+    """Базовый валидатор."""
+    
+    @staticmethod
+    def validate_number(value: str, min_value: float = 0, max_value: float = float('inf')) -> float:
+        """Валидация числа из строки."""
+        try:
+            num = float(value.replace(',', '.'))
+            if num < min_value or num > max_value:
+                raise ValidationError(f"Value must be between {min_value} and {max_value}")
+            return num
+        except ValueError:
+            raise ValidationError("Invalid number format")
+
+
+class PriceAlertsValidator:
+    """Валидатор для ценовых алертов."""
+    
+    @staticmethod
+    def validate_preset_name(name: str) -> str:
+        """Валидация имени пресета."""
+        if not isinstance(name, str):
+            raise ValidationError("Preset name must be a string")
+        
+        name = name.strip()
+        if not name:
+            raise ValidationError("Preset name cannot be empty")
+        
+        if len(name) > 50:
+            raise ValidationError("Preset name too long (max 50 characters)")
+        
+        return name
+    
+    @staticmethod
+    def validate_pairs(pairs: list) -> List[str]:
+        """Валидация списка торговых пар."""
+        if not isinstance(pairs, list):
+            raise ValidationError("Pairs must be a list")
+        
+        if not pairs:
+            raise ValidationError("Pairs list cannot be empty")
+        
+        validated = []
+        for pair in pairs:
+            if isinstance(pair, str) and pair.strip():
+                validated.append(pair.strip().upper())
+        
+        return validated
+    
+    @staticmethod
+    def validate_interval(interval: str) -> str:
+        """Валидация интервала."""
+        valid_intervals = ["1m", "5m", "15m", "1h", "4h", "1d"]
+        if interval not in valid_intervals:
+            raise ValidationError(f"Invalid interval: {interval}")
+        return interval
+    
+    @staticmethod
+    def validate_percent(percent: float) -> float:
+        """Валидация процента."""
+        if not isinstance(percent, (int, float)):
+            raise ValidationError("Percent must be a number")
+        
+        if percent <= 0:
+            raise ValidationError("Percent must be positive")
+        
+        if percent > 1000:
+            raise ValidationError("Percent too large (max 1000%)")
+        
+        return round(float(percent), 2)

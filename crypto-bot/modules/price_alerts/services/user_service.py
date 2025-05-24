@@ -1,9 +1,9 @@
 """Сервис для работы с пользователями."""
 
 from typing import Dict, Any, Optional
-from bot.db.repositories.user_repository import UserRepository
-from bot.core.exceptions import UserNotFoundError, DatabaseError
-from bot.core.logger import get_logger
+from ....shared.database.repositories.user_repository import UserRepository
+from ....shared.exceptions import UserNotFoundError, DatabaseError
+from ....shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

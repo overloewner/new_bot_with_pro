@@ -6,9 +6,9 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 
-from bot.database.models import Base
-from bot.core.config import DatabaseConfig
-from bot.core.exceptions import DatabaseError
+from .models import Base
+from ...config import DatabaseConfig
+from ..exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
 

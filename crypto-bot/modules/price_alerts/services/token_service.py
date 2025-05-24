@@ -6,9 +6,9 @@ import orjson
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
-from bot.core.config import TokenConfig
-from bot.core.exceptions import TokenServiceError
-from bot.core.logger import get_logger
+from ....config import TokenConfig
+from ....shared.exceptions import TokenServiceError
+from ....shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

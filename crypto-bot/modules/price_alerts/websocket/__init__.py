@@ -1,13 +1,13 @@
 # modules/price_alerts/websocket/__init__.py
-"""WebSocket компоненты (адаптация существующего кода)."""
+"""WebSocket компоненты для price alerts."""
 
-# Импортируем существующие компоненты
-from bot.websocket.client import BinanceWebSocketClient
-from bot.websocket.message_handler import MessageHandler
-from bot.websocket.reconnect_manager import ReconnectManager
+from .client import BinanceWebSocketClient, WebSocketConfig
+from .message_handler import MessageHandler
+from .reconnect_manager import ReconnectManager
 
 __all__ = [
     'BinanceWebSocketClient',
+    'WebSocketConfig', 
     'MessageHandler',
     'ReconnectManager'
 ]

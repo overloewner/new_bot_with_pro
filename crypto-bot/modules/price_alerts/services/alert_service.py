@@ -6,10 +6,10 @@ from collections import defaultdict
 from typing import Dict, Set, List, Any
 from aiogram import Bot
 
-from bot.core.config import ProcessingConfig, RateLimitConfig
-from bot.utils.rate_limiter import GlobalRateLimiter, UserRateLimiter
-from bot.utils.price_analyzer import PriceAnalyzer
-from bot.core.logger import get_logger
+from ....config import ProcessingConfig, RateLimitConfig
+from ....shared.utils.rate_limiter import GlobalRateLimiter, UserRateLimiter
+from ..utils.price_analyzer import PriceAnalyzer
+from ....shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

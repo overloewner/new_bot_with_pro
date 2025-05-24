@@ -7,10 +7,10 @@ from typing import Dict, Any, List, Set, Tuple
 from collections import defaultdict, deque
 from decimal import Decimal
 
-from bot.services.alert_service import AlertService
+from .alert_service import AlertService
 from bot.storage import Storage
-from bot.core.config import ProcessingConfig
-from bot.core.logger import get_logger
+from config import ProcessingConfig
+from shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

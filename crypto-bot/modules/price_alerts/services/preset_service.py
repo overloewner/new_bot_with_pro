@@ -2,9 +2,9 @@
 
 from typing import Dict, Any, List, Set
 import uuid
-from bot.db.repositories.preset_repository import PresetRepository
-from bot.core.exceptions import PresetNotFoundError, DatabaseError, ValidationError
-from bot.core.logger import get_logger
+from ....shared.database.repositories.preset_repository import PresetRepository
+from ....shared.exceptions import PresetNotFoundError, DatabaseError, ValidationError
+from ....shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
