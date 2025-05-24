@@ -1,4 +1,3 @@
-
 # shared/database/manager.py
 """Улучшенный менеджер базы данных для модульной архитектуры."""
 
@@ -8,6 +7,7 @@ from typing import AsyncGenerator, Dict, Any
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
+from sqlalchemy import text  # ДОБАВЛЕНО: для правильного SQL
 import logging
 
 from .models import Base
@@ -102,7 +102,8 @@ class DatabaseManager:
         """Проверка здоровья соединения с БД."""
         try:
             async with self.get_session() as session:
-                await session.execute("SELECT 1")
+                # ИСПРАВЛЕНО: Используем text() для SQL запроса
+                await session.execute(text("SELECT 1"))
                 return True
         except Exception as e:
             logger.error(f"Database health check failed: {e}")

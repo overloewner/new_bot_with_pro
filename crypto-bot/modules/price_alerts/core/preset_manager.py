@@ -41,8 +41,8 @@ class PresetManager:
             if self.db_manager:
                 await self._load_from_database()
             else:
-                # Создаем тестовые данные
-                await self._create_test_presets()
+                # УДАЛЕНО: Тестовые данные больше не создаются
+                logger.info("No database connection - starting with empty presets")
             
             self._rebuild_indexes()
             logger.info(f"Preset manager initialized with {self._stats['total_presets']} presets")
@@ -251,39 +251,12 @@ class PresetManager:
             'monitoring_users': monitoring_users
         })
     
-    async def _create_test_presets(self):
-        """Создание тестовых пресетов."""
-        test_user_id = 123456789
-        
-        test_presets = [
-            {
-                'preset_name': 'Топ криптовалюты 1%',
-                'pairs': ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'],
-                'interval': '1m',
-                'percent': 1.0,
-                'check_correlation': False
-            },
-            {
-                'preset_name': 'Альткоины 2%',
-                'pairs': ['ADAUSDT', 'SOLUSDT', 'XRPUSDT'],
-                'interval': '5m',
-                'percent': 2.0,
-                'check_correlation': True
-            }
-        ]
-        
-        for preset_data in test_presets:
-            preset_id = await self.create_preset(test_user_id, preset_data)
-            if preset_id:
-                await self.activate_preset(test_user_id, preset_id)
-        
-        # Включаем мониторинг для тестового пользователя
-        await self.set_user_monitoring(test_user_id, True)
+    # УДАЛЕНО: _create_test_presets метод
     
     async def _load_from_database(self):
         """Загрузка пресетов из базы данных."""
         # TODO: Реализовать загрузку из БД когда будет готова
-        pass
+        logger.info("Database loading not implemented yet")
     
     async def _save_preset_to_db(self, preset: Dict[str, Any]):
         """Сохранение пресета в БД."""

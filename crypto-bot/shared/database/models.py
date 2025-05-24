@@ -1,5 +1,5 @@
 # shared/database/models.py
-"""Общие модели базы данных для всех модулей."""
+"""Исправленные модели базы данных для всех модулей."""
 
 from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -33,7 +33,6 @@ class User(Base):
         return f"<User(user_id={self.user_id}, username={self.username})>"
 
 
-# === PRICE ALERTS MODELS ===
 class PricePreset(Base):
     """Модель пресета ценовых алертов."""
     __tablename__ = 'price_presets'
@@ -53,14 +52,13 @@ class PricePreset(Base):
     alerts_triggered = Column(Integer, default=0)
     last_alert = Column(DateTime(timezone=True))
     
-    # Индексы для производительности
     __table_args__ = (
         Index('idx_price_presets_user_active', 'user_id', 'is_active'),
         Index('idx_price_presets_active', 'is_active'),
+        {'extend_existing': True}
     )
 
 
-# === GAS TRACKER MODELS ===
 class GasAlert(Base):
     """Модель алерта газа."""
     __tablename__ = 'gas_alerts'
@@ -77,10 +75,10 @@ class GasAlert(Base):
     
     __table_args__ = (
         Index('idx_gas_alerts_user_active', 'user_id', 'is_active'),
+        {'extend_existing': True}
     )
 
 
-# === WHALE TRACKER MODELS ===
 class WhaleAlert(Base):
     """Модель алерта китов."""
     __tablename__ = 'whale_alerts'
@@ -98,10 +96,10 @@ class WhaleAlert(Base):
     
     __table_args__ = (
         Index('idx_whale_alerts_user_active', 'user_id', 'is_active'),
+        {'extend_existing': True}
     )
 
 
-# === WALLET TRACKER MODELS ===
 class WalletAlert(Base):
     """Модель алерта кошелька."""
     __tablename__ = 'wallet_alerts'
@@ -122,10 +120,10 @@ class WalletAlert(Base):
     __table_args__ = (
         Index('idx_wallet_alerts_user_active', 'user_id', 'is_active'),
         Index('idx_wallet_alerts_address', 'wallet_address'),
+        {'extend_existing': True}
     )
 
 
-# === COMMON LOGS AND STATISTICS ===
 class AlertLog(Base):
     """Общий лог всех алертов."""
     __tablename__ = 'alert_logs'
@@ -143,6 +141,7 @@ class AlertLog(Base):
     __table_args__ = (
         Index('idx_alert_logs_user_module', 'user_id', 'module_name'),
         Index('idx_alert_logs_sent_at', 'sent_at'),
+        {'extend_existing': True}
     )
 
 
@@ -170,6 +169,10 @@ class SystemStats(Base):
     # Производительность
     avg_response_time_ms = Column(Float, default=0)
     error_rate_percent = Column(Float, default=0)
+    
+    __table_args__ = (
+        {'extend_existing': True}
+    )
     
     def __repr__(self):
         return f"<SystemStats(timestamp={self.timestamp}, active_users={self.active_users})>"

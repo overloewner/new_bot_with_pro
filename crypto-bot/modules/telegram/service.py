@@ -8,7 +8,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from shared.events import event_bus, Event, MESSAGE_SENT, USER_COMMAND_RECEIVED
 from modules.telegram.handlers.main_handler import MainHandler
-
 from modules.telegram.middleware.logging_middleware import LoggingMiddleware
 from modules.price_alerts.handlers import PriceAlertsHandler
 
@@ -28,9 +27,9 @@ class TelegramService:
         
         # Подписываемся на события алертов
         event_bus.subscribe("price_alert.triggered", self._handle_price_alert)
-        event_bus.subscribe("gas.alert_triggered", self._handle_gas_alert)
-        event_bus.subscribe("whale.alert_triggered", self._handle_whale_alert)
-        event_bus.subscribe("wallet.alert_triggered", self._handle_wallet_alert)
+        event_bus.subscribe("gas_alert_triggered", self._handle_gas_alert)
+        event_bus.subscribe("whale_alert_triggered", self._handle_whale_alert)
+        event_bus.subscribe("wallet_alert_triggered", self._handle_wallet_alert)
     
     async def start(self) -> None:
         """Запуск Telegram сервиса."""
@@ -41,8 +40,9 @@ class TelegramService:
         self.bot = Bot(token=self.bot_token)
         self.dp = Dispatcher(storage=MemoryStorage())
         
-        # Подключаем middleware
-        self.dp.middleware.setup(LoggingMiddleware())
+        # ИСПРАВЛЕНО: Правильная установка middleware для aiogram 3.x
+        self.dp.message.middleware(LoggingMiddleware())
+        self.dp.callback_query.middleware(LoggingMiddleware())
         
         # Регистрируем обработчики
         await self._setup_handlers()
@@ -69,15 +69,11 @@ class TelegramService:
     
     async def _setup_handlers(self) -> None:
         """Настройка обработчиков команд."""
-        # Получаем сервисы из других модулей через event bus
-        from shared.events import event_bus
-        
         # Регистрируем основной обработчик
         main_handler = MainHandler()
         main_handler.register(self.dp)
         
-       # Price alerts обработчик
-
+        # Price alerts обработчик
         price_handler = PriceAlertsHandler()
         price_handler.register_handlers(self.dp)
         

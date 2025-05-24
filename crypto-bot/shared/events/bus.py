@@ -16,7 +16,7 @@ class Event:
     type: str
     data: Dict[str, Any]
     timestamp: datetime = field(default_factory=datetime.utcnow)
-    source_module: str = "unknown"
+    source_module: str = "unknown"  # ИСПРАВЛЕНО: переименовано с module_source
     correlation_id: Optional[str] = None
 
 

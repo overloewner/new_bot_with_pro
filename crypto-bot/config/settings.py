@@ -35,5 +35,13 @@ class AppConfig:
                 "DATABASE_URL",
                 "postgresql://postgres:Zxasqw!2@localhost/crypto_bot"
             ),
-            etherscan_api_key=os.getenv("ETHERSCAN_API_KEY")
+            etherscan_api_key=os.getenv("ETHERSCAN_API_KEY")  # Добавить в .env файл
         )
+    
+    def has_etherscan_api(self) -> bool:
+        """Проверка наличия Etherscan API ключа."""
+        return bool(self.etherscan_api_key and self.etherscan_api_key.strip())
+    
+    def get_etherscan_api_key(self) -> str:
+        """Получение API ключа или YourApiKeyToken для ограниченного доступа."""
+        return self.etherscan_api_key if self.has_etherscan_api() else "YourApiKeyToken"

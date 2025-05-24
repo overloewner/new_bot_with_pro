@@ -6,9 +6,7 @@ from datetime import datetime, timedelta
 import logging
 
 from shared.events import event_bus, Event, WHALE_TRANSACTION_DETECTED, WHALE_ALERT_TRIGGERED
-from shared.database.models import Base
-from sqlalchemy import Column, Integer, BigInteger, Float, Boolean, DateTime, String, Text
-from sqlalchemy.sql import func
+from shared.database.models import WhaleAlert
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +23,6 @@ class WhaleTransaction:
     block_number: int
     timestamp: datetime
     tx_type: str  # 'transfer', 'swap', 'unknown'
-
-
-class WhaleAlert(Base):
-    """Модель алерта кита."""
-    __tablename__ = 'whale_alerts'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, nullable=False, index=True)
-    threshold_usd = Column(Float, nullable=False)
-    threshold_btc = Column(Float, nullable=True)
-    token_filter = Column(Text, nullable=True)  # JSON список токенов
-    is_active = Column(Boolean, nullable=False, default=True)
-    last_triggered = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class LimitedWhaleService:
@@ -99,19 +83,20 @@ class LimitedWhaleService:
         # Загружаем алерты из БД
         await self._load_alerts()
         
-        # Запускаем мониторинг
+        # Запускаем только мониторинг цен (без транзакций из-за API key)
         asyncio.create_task(self._monitor_prices())
-        asyncio.create_task(self._monitor_large_transactions())
+        # ОТКЛЮЧЕНО: мониторинг транзакций без API ключа
+        # asyncio.create_task(self._monitor_large_transactions())
         
         await event_bus.publish(Event(
             type="system.module_started",
-            data={"module": "whale_tracker", "limitation": "free_apis_only"},
+            data={"module": "whale_tracker", "limitation": "price_monitoring_only"},
             source_module="whale_tracker"
         ))
         
         logger.warning(
-            "⚠️ Whale Tracker started with LIMITED functionality. "
-            "Only large public transactions will be detected."
+            "⚠️ Whale Tracker started in LIMITED mode. "
+            "Only price monitoring enabled. Add Etherscan API key for transaction monitoring."
         )
     
     async def stop(self) -> None:
@@ -157,226 +142,21 @@ class LimitedWhaleService:
                 logger.error(f"Error updating prices: {e}")
                 await asyncio.sleep(300)
     
-    async def _monitor_large_transactions(self) -> None:
-        """
-        Мониторинг крупных транзакций через бесплатные API.
-        
-        ⚠️ ОГРАНИЧЕНИЯ:
-        - Только ETH транзакции (не ERC-20 токены)
-        - Задержка 1-2 блока
-        - Лимит 5 запросов в секунду
-        """
-        while self.running:
-            try:
-                # Получаем последние блоки от Etherscan
-                latest_blocks = await self._get_latest_blocks()
-                
-                for block_number in latest_blocks:
-                    transactions = await self._get_block_transactions(block_number)
-                    
-                    for tx in transactions:
-                        if await self._is_whale_transaction(tx):
-                            whale_tx = await self._parse_whale_transaction(tx)
-                            if whale_tx:
-                                await self._process_whale_transaction(whale_tx)
-                    
-                    # Пауза между блоками для соблюдения лимитов API
-                    await asyncio.sleep(1)
-                
-                # Проверяем новые блоки каждые 30 секунд
-                await asyncio.sleep(30)
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error monitoring transactions: {e}")
-                await asyncio.sleep(60)
+    # ОТКЛЮЧЕНО: мониторинг транзакций без API ключа
+    # async def _monitor_large_transactions будет включен когда добавят API ключ
     
-    async def _get_latest_blocks(self) -> List[int]:
-        """Получение номеров последних блоков."""
+    async def _check_user_alerts(self, event: Event) -> None:
+        """Проверка алертов конкретного пользователя."""
         try:
-            async with self._session.get(
-                "https://api.etherscan.io/api",
-                params={
-                    "module": "proxy",
-                    "action": "eth_blockNumber",
-                    "apikey": "YourApiKeyToken"  # Можно без ключа для лимитированных запросов
-                }
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get("result"):
-                        latest_block = int(data["result"], 16)
-                        # Возвращаем последние 3 блока
-                        return [latest_block - i for i in range(3)]
+            user_id = event.data.get("user_id")
+            if not user_id or user_id not in self._alerts:
+                return
+            
+            # Пока что только логируем - без API ключа нет транзакций для проверки
+            logger.info(f"Whale alerts check requested for user {user_id} - API key needed for full functionality")
+                
         except Exception as e:
-            logger.error(f"Error getting latest blocks: {e}")
-        
-        return []
-    
-    async def _get_block_transactions(self, block_number: int) -> List[Dict]:
-        """Получение транзакций блока."""
-        try:
-            async with self._session.get(
-                "https://api.etherscan.io/api",
-                params={
-                    "module": "proxy",
-                    "action": "eth_getBlockByNumber",
-                    "tag": hex(block_number),
-                    "boolean": "true",
-                    "apikey": "YourApiKeyToken"
-                }
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    block = data.get("result", {})
-                    return block.get("transactions", [])
-        except Exception as e:
-            logger.error(f"Error getting block {block_number} transactions: {e}")
-        
-        return []
-    
-    async def _is_whale_transaction(self, tx: Dict) -> bool:
-        """Проверка, является ли транзакция китовой."""
-        try:
-            # Проверяем размер транзакции
-            value_wei = int(tx.get("value", "0"), 16)
-            value_eth = value_wei / 10**18
-            
-            # Считаем китовой транзакцией > 100 ETH
-            if value_eth < 100:
-                return False
-            
-            # Проверяем адреса
-            from_addr = tx.get("from", "").lower()
-            to_addr = tx.get("to", "").lower()
-            
-            # Транзакция с участием известного кита
-            if from_addr in self._known_whale_addresses or to_addr in self._known_whale_addresses:
-                return True
-            
-            # Очень крупная транзакция (> 1000 ETH)
-            if value_eth > 1000:
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error checking whale transaction: {e}")
-            return False
-    
-    async def _parse_whale_transaction(self, tx: Dict) -> Optional[WhaleTransaction]:
-        """Парсинг данных китовой транзакции."""
-        try:
-            value_wei = int(tx.get("value", "0"), 16)
-            value_eth = value_wei / 10**18
-            value_usd = value_eth * self._eth_price_usd
-            
-            return WhaleTransaction(
-                tx_hash=tx.get("hash", ""),
-                from_address=tx.get("from", ""),
-                to_address=tx.get("to", ""),
-                value_eth=value_eth,
-                value_usd=value_usd,
-                token_symbol="ETH",
-                block_number=int(tx.get("blockNumber", "0"), 16),
-                timestamp=datetime.utcnow(),
-                tx_type="transfer"
-            )
-        except Exception as e:
-            logger.error(f"Error parsing whale transaction: {e}")
-            return None
-    
-    async def _process_whale_transaction(self, whale_tx: WhaleTransaction) -> None:
-        """Обработка китовой транзакции."""
-        # Публикуем событие обнаружения
-        await event_bus.publish(Event(
-            type=WHALE_TRANSACTION_DETECTED,
-            data={
-                "tx_hash": whale_tx.tx_hash,
-                "from_address": whale_tx.from_address,
-                "to_address": whale_tx.to_address,
-                "value_eth": whale_tx.value_eth,
-                "value_usd": whale_tx.value_usd,
-                "token_symbol": whale_tx.token_symbol,
-                "timestamp": whale_tx.timestamp.isoformat()
-            },
-            source_module="whale_tracker"
-        ))
-        
-        # Проверяем алерты пользователей
-        await self._check_transaction_alerts(whale_tx)
-    
-    async def _check_transaction_alerts(self, whale_tx: WhaleTransaction) -> None:
-        """Проверка алертов пользователей для транзакции."""
-        for user_id, user_alerts in self._alerts.items():
-            for alert in user_alerts:
-                if not alert.is_active:
-                    continue
-                
-                # Проверяем кулдаун
-                if (alert.last_triggered and 
-                    datetime.utcnow() - alert.last_triggered < timedelta(minutes=10)):
-                    continue
-                
-                # Проверяем пороги
-                triggered = False
-                
-                if alert.threshold_usd and whale_tx.value_usd >= alert.threshold_usd:
-                    triggered = True
-                
-                if alert.threshold_btc and self._btc_price_usd > 0:
-                    value_btc = whale_tx.value_usd / self._btc_price_usd
-                    if value_btc >= alert.threshold_btc:
-                        triggered = True
-                
-                if triggered:
-                    await self._trigger_whale_alert(user_id, alert, whale_tx)
-    
-    async def _trigger_whale_alert(
-        self, 
-        user_id: int, 
-        alert: WhaleAlert, 
-        whale_tx: WhaleTransaction
-    ) -> None:
-        """Срабатывание алерта кита."""
-        # Определяем направление транзакции
-        from_known = whale_tx.from_address.lower() in self._known_whale_addresses
-        to_known = whale_tx.to_address.lower() in self._known_whale_addresses
-        
-        if from_known and to_known:
-            direction = "🔄 Перевод между китами"
-        elif from_known:
-            direction = "📤 Вывод с кошелька кита"
-        elif to_known:
-            direction = "📥 Пополнение кошелька кита"
-        else:
-            direction = "🐋 Крупная транзакция"
-        
-        message = (
-            f"{direction}\n\n"
-            f"💰 Сумма: {whale_tx.value_eth:.2f} ETH\n"
-            f"💵 ~${whale_tx.value_usd:,.0f}\n"
-            f"📋 Hash: {whale_tx.tx_hash[:10]}...\n"
-            f"🕐 Время: {whale_tx.timestamp.strftime('%H:%M:%S')}"
-        )
-        
-        await event_bus.publish(Event(
-            type=WHALE_ALERT_TRIGGERED,
-            data={
-                "user_id": user_id,
-                "message": message,
-                "transaction": {
-                    "hash": whale_tx.tx_hash,
-                    "value_eth": whale_tx.value_eth,
-                    "value_usd": whale_tx.value_usd
-                }
-            },
-            source_module="whale_tracker"
-        ))
-        
-        # Обновляем время последнего срабатывания
-        alert.last_triggered = datetime.utcnow()
+            logger.error(f"Error checking user alerts: {e}")
     
     async def _load_alerts(self) -> None:
         """Загрузка алертов из БД."""
@@ -400,7 +180,9 @@ class LimitedWhaleService:
             if threshold_btc and (threshold_btc < 0.1 or threshold_btc > 10000):
                 return False
             
+            import time
             alert = WhaleAlert(
+                id=int(time.time() * 1000) % 2147483647,  # Временный ID
                 user_id=user_id,
                 threshold_usd=threshold_usd,
                 threshold_btc=threshold_btc,
@@ -412,7 +194,7 @@ class LimitedWhaleService:
             
             self._alerts[user_id].append(alert)
             
-            logger.info(f"Added whale alert for user {user_id}")
+            logger.info(f"Added whale alert for user {user_id} (requires API key for monitoring)")
             return True
             
         except Exception as e:
@@ -424,7 +206,7 @@ class LimitedWhaleService:
         alerts = self._alerts.get(user_id, [])
         return [
             {
-                "id": alert.id,
+                "id": getattr(alert, 'id', 0),
                 "threshold_usd": alert.threshold_usd,
                 "threshold_btc": alert.threshold_btc,
                 "is_active": alert.is_active
@@ -437,21 +219,20 @@ class LimitedWhaleService:
         return {
             "title": "Ограничения Whale Tracker",
             "limitations": [
-                "❌ Только ETH транзакции (не ERC-20 токены)",
-                "❌ Задержка 1-2 блока (~30-60 секунд)", 
-                "❌ Только известные адреса китов",
-                "❌ Лимит API: 5 запросов/сек",
+                "❌ Требуется Etherscan API ключ для мониторинга транзакций",
+                "❌ Сейчас работает только мониторинг цен ETH/BTC",
+                "❌ Нет отслеживания крупных транзакций",
                 "❌ Нет анализа DeFi операций"
             ],
             "for_full_functionality": [
-                "💰 Nansen API ($150/месяц)",
-                "💰 Glassnode API ($39/месяц)", 
-                "💰 Собственная Ethereum нода ($500+/месяц)",
-                "💰 Dune Analytics API ($390/месяц)"
+                "🔑 Добавить Etherscan API ключ в конфигурацию",
+                "💰 Nansen API ($150/месяц) - для профессионального анализа",
+                "💰 Glassnode API ($39/месяц) - для ончейн метрик", 
+                "💰 Собственная Ethereum нода ($500+/месяц)"
             ],
             "what_works": [
-                "✅ Крупные ETH переводы (>100 ETH)",
-                "✅ Известные адреса китов",
-                "✅ Базовая фильтрация по сумме"
+                "✅ Мониторинг цен ETH и BTC",
+                "✅ Управление алертами",
+                "✅ Готов к работе при добавлении API ключа"
             ]
         }

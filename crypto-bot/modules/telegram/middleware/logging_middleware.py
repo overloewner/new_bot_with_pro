@@ -43,7 +43,7 @@ class LoggingMiddleware(BaseMiddleware):
             await event_bus.publish(Event(
                 type=USER_COMMAND_RECEIVED,
                 data=event_data,
-                source_module="telegram"
+                source_module="telegram"  # ИСПРАВЛЕНО: используем source_module вместо module
             ))
             
             logger.info(f"User {user_id} ({username}) - {event_type}: {event_data}")
@@ -62,7 +62,7 @@ class LoggingMiddleware(BaseMiddleware):
                     "handler": handler.__name__,
                     "user_id": getattr(event, 'from_user', {}).get('id') if hasattr(event, 'from_user') else None
                 },
-                source_module="telegram"
+                source_module="telegram"  # ИСПРАВЛЕНО: используем source_module вместо module
             ))
             
             # Пробрасываем ошибку дальше

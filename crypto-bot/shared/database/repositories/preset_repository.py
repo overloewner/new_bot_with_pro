@@ -7,54 +7,54 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
-from bot.db.models import Preset
-from bot.db.repositories.base import BaseRepository
-from bot.core.exceptions import DatabaseError
+from shared.database.models import PricePreset  # ИСПРАВЛЕНИЕ: Изменено с Preset на PricePreset
+from shared.database.repositories.base_repository import BaseRepository  # ИСПРАВЛЕНИЕ: Изменен путь
+from shared.exceptions import DatabaseError  # ИСПРАВЛЕНИЕ: Изменен путь
 
 
-class PresetRepository(BaseRepository[Preset]):
+class PresetRepository(BaseRepository[PricePreset]):  # ИСПРАВЛЕНИЕ: Изменено с Preset на PricePreset
     """Репозиторий для работы с пресетами."""
     
     def __init__(self, session: AsyncSession):
-        super().__init__(session, Preset)
+        super().__init__(session, PricePreset)  # ИСПРАВЛЕНИЕ: Изменено с Preset на PricePreset
     
-    async def get_by_preset_id(self, preset_id: str) -> Optional[Preset]:
+    async def get_by_preset_id(self, preset_id: str) -> Optional[PricePreset]:  # ИСПРАВЛЕНИЕ: Изменено тип
         """Получение пресета по preset_id."""
         try:
             result = await self.session.execute(
-                select(Preset).where(Preset.preset_id == UUID(preset_id))
+                select(PricePreset).where(PricePreset.preset_id == UUID(preset_id))  # ИСПРАВЛЕНИЕ: Изменено модель
             )
             return result.scalar_one_or_none()
         except SQLAlchemyError as e:
             raise DatabaseError(f"Error getting preset by preset_id {preset_id}: {e}")
     
-    async def get_by_user_id(self, user_id: int) -> List[Preset]:
+    async def get_by_user_id(self, user_id: int) -> List[PricePreset]:  # ИСПРАВЛЕНИЕ: Изменено тип
         """Получение всех пресетов пользователя."""
         try:
             result = await self.session.execute(
-                select(Preset).where(Preset.user_id == user_id)
+                select(PricePreset).where(PricePreset.user_id == user_id)  # ИСПРАВЛЕНИЕ: Изменено модель
             )
             return list(result.scalars().all())
         except SQLAlchemyError as e:
             raise DatabaseError(f"Error getting presets for user {user_id}: {e}")
     
-    async def get_active_by_user_id(self, user_id: int) -> List[Preset]:
+    async def get_active_by_user_id(self, user_id: int) -> List[PricePreset]:  # ИСПРАВЛЕНИЕ: Изменено тип
         """Получение активных пресетов пользователя."""
         try:
             result = await self.session.execute(
-                select(Preset).where(
-                    Preset.user_id == user_id,
-                    Preset.is_active == True
+                select(PricePreset).where(  # ИСПРАВЛЕНИЕ: Изменено модель
+                    PricePreset.user_id == user_id,
+                    PricePreset.is_active == True
                 )
             )
             return list(result.scalars().all())
         except SQLAlchemyError as e:
             raise DatabaseError(f"Error getting active presets for user {user_id}: {e}")
     
-    async def create_preset(self, user_id: int, preset_data: Dict[str, Any]) -> Preset:
+    async def create_preset(self, user_id: int, preset_data: Dict[str, Any]) -> PricePreset:  # ИСПРАВЛЕНИЕ: Изменено тип
         """Создание нового пресета."""
         try:
-            preset = Preset(
+            preset = PricePreset(  # ИСПРАВЛЕНИЕ: Изменено с Preset на PricePreset
                 user_id=user_id,
                 preset_name=preset_data["preset_name"],
                 pairs=json.dumps(preset_data["pairs"]),
@@ -74,8 +74,8 @@ class PresetRepository(BaseRepository[Preset]):
         """Обновление статуса активности пресета."""
         try:
             result = await self.session.execute(
-                update(Preset)
-                .where(Preset.preset_id == UUID(preset_id))
+                update(PricePreset)  # ИСПРАВЛЕНИЕ: Изменено с Preset на PricePreset
+                .where(PricePreset.preset_id == UUID(preset_id))
                 .values(is_active=is_active)
             )
             await self.session.commit()
@@ -88,7 +88,7 @@ class PresetRepository(BaseRepository[Preset]):
         """Удаление пресета."""
         try:
             result = await self.session.execute(
-                delete(Preset).where(Preset.preset_id == UUID(preset_id))
+                delete(PricePreset).where(PricePreset.preset_id == UUID(preset_id))  # ИСПРАВЛЕНИЕ: Изменено модель
             )
             await self.session.commit()
             return result.rowcount > 0

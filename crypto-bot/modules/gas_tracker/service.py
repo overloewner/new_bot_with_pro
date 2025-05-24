@@ -9,9 +9,7 @@ from datetime import datetime, timedelta
 import logging
 
 from shared.events import event_bus, Event, GAS_PRICE_UPDATED, GAS_ALERT_TRIGGERED
-from shared.database.models import Base
-from sqlalchemy import Column, Integer, BigInteger, Float, Boolean, DateTime, String
-from sqlalchemy.sql import func
+from shared.database.models import GasAlert
 
 logger = logging.getLogger(__name__)
 
@@ -24,19 +22,6 @@ class GasPrice:
     fast: float
     instant: float
     timestamp: datetime
-
-
-class GasAlert(Base):
-    """Модель алерта газа."""
-    __tablename__ = 'gas_alerts'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, nullable=False, index=True)
-    threshold_gwei = Column(Float, nullable=False)
-    alert_type = Column(String(20), nullable=False, default='below')  # below, above
-    is_active = Column(Boolean, nullable=False, default=True)
-    last_triggered = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class GasTrackerService:
@@ -201,6 +186,41 @@ class GasTrackerService:
                 
                 if triggered:
                     await self._trigger_alert(user_id, alert, current_price)
+    
+    # ДОБАВЛЕНО: Отсутствующий метод _check_user_alerts
+    async def _check_user_alerts(self, event: Event) -> None:
+        """Проверка алертов конкретного пользователя."""
+        try:
+            user_id = event.data.get("user_id")
+            if not user_id or user_id not in self._alerts:
+                return
+            
+            if not self._current_gas:
+                return
+            
+            user_alerts = self._alerts[user_id]
+            for alert in user_alerts:
+                if not alert.is_active:
+                    continue
+                
+                # Проверяем кулдаун
+                if (alert.last_triggered and 
+                    datetime.utcnow() - alert.last_triggered < timedelta(minutes=5)):
+                    continue
+                
+                triggered = False
+                current_price = self._current_gas.standard
+                
+                if alert.alert_type == "below" and current_price <= alert.threshold_gwei:
+                    triggered = True
+                elif alert.alert_type == "above" and current_price >= alert.threshold_gwei:
+                    triggered = True
+                
+                if triggered:
+                    await self._trigger_alert(user_id, alert, current_price)
+                    
+        except Exception as e:
+            logger.error(f"Error checking user alerts: {e}")
     
     async def _trigger_alert(self, user_id: int, alert: GasAlert, current_price: float) -> None:
         """Срабатывание алерта."""

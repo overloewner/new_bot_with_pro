@@ -4,8 +4,12 @@
 import asyncio
 import signal
 import sys
+import warnings
 from typing import Dict, Any, List
 import logging
+
+# Подавляем предупреждения о deprecation
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Настройка базового логирования
 logging.basicConfig(
@@ -133,19 +137,19 @@ class ModularCryptoBot:
     
     async def _on_module_started(self, event: Event) -> None:
         """Обработка события запуска модуля."""
-        module = event.data.get("module", "unknown")
-        logger.info(f"✅ Module '{module}' started")
+        module_name = event.data.get("module", "unknown")  # ИСПРАВЛЕНО: переименовано с module
+        logger.info(f"✅ Module '{module_name}' started")
     
     async def _on_module_stopped(self, event: Event) -> None:
         """Обработка события остановки модуля."""
-        module = event.data.get("module", "unknown")
-        logger.info(f"⏹️ Module '{module}' stopped")
+        module_name = event.data.get("module", "unknown")  # ИСПРАВЛЕНО: переименовано с module
+        logger.info(f"⏹️ Module '{module_name}' stopped")
     
     async def _on_system_error(self, event: Event) -> None:
         """Обработка системных ошибок."""
         error = event.data.get("error", "unknown")
-        module = event.source_module
-        logger.error(f"❌ Error in module '{module}': {error}")
+        module_name = event.source_module
+        logger.error(f"❌ Error in module '{module_name}': {error}")
     
     async def start(self) -> None:
         """Запуск всех модулей."""
@@ -188,7 +192,8 @@ class ModularCryptoBot:
         logger.info("🔧 Starting core modules...")
         
         # Price Alerts (основной функционал)
-        await self.price_alerts_service.start()
+        if self.price_alerts_service:
+            await self.price_alerts_service.start()
         
         logger.info("✅ Core modules started")
     
@@ -197,13 +202,16 @@ class ModularCryptoBot:
         logger.info("⭐ Starting feature modules...")
         
         # Gas Tracker
-        await self.gas_tracker_service.start()
+        if self.gas_tracker_service:
+            await self.gas_tracker_service.start()
         
         # Whale Tracker (с предупреждением об ограничениях)
-        await self.whale_service.start()
+        if self.whale_service:
+            await self.whale_service.start()
         
         # Wallet Tracker (с предупреждением об ограничениях)
-        await self.wallet_service.start()
+        if self.wallet_service:
+            await self.wallet_service.start()
         
         logger.info("✅ Feature modules started")
     
@@ -212,8 +220,9 @@ class ModularCryptoBot:
         logger.info("📱 Starting Telegram service...")
         
         # Создаем задачу для Telegram (она будет работать бесконечно)
-        telegram_task = asyncio.create_task(self.telegram_service.start())
-        self.tasks.append(telegram_task)
+        if self.telegram_service:
+            telegram_task = asyncio.create_task(self.telegram_service.start())
+            self.tasks.append(telegram_task)
         
         # Небольшая пауза для инициализации
         await asyncio.sleep(2)

@@ -6,9 +6,7 @@ from datetime import datetime, timedelta
 import logging
 
 from shared.events import event_bus, Event, WALLET_TRANSACTION_DETECTED, WALLET_ALERT_TRIGGERED
-from shared.database.models import Base
-from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, Text
-from sqlalchemy.sql import func
+from shared.database.models import WalletAlert
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +24,6 @@ class WalletTransaction:
     block_number: int
     timestamp: datetime
     status: str  # 'success', 'failed'
-
-
-class WalletAlert(Base):
-    """Модель алерта кошелька."""
-    __tablename__ = 'wallet_alerts'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, nullable=False, index=True)
-    wallet_address = Column(String(42), nullable=False)
-    min_value_eth = Column(BigInteger, nullable=True)  # Минимальная сумма для уведомления
-    track_incoming = Column(Boolean, nullable=False, default=True)
-    track_outgoing = Column(Boolean, nullable=False, default=True)
-    is_active = Column(Boolean, nullable=False, default=True)
-    last_checked_block = Column(BigInteger, nullable=True)
-    last_triggered = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class LimitedWalletTrackerService:
@@ -165,6 +147,19 @@ class LimitedWalletTrackerService:
             except Exception as e:
                 logger.error(f"Error in periodic wallet check: {e}")
                 await asyncio.sleep(300)
+    
+    # ДОБАВЛЕНО: Отсутствующий метод _check_specific_wallet
+    async def _check_specific_wallet(self, event: Event) -> None:
+        """Проверка конкретного кошелька по запросу."""
+        try:
+            wallet_address = event.data.get("wallet_address")
+            if not wallet_address:
+                return
+            
+            await self._check_wallet_transactions(wallet_address.lower())
+            
+        except Exception as e:
+            logger.error(f"Error checking specific wallet: {e}")
     
     async def _check_wallet_transactions(self, address: str) -> None:
         """Проверка транзакций конкретного кошелька."""
@@ -439,7 +434,7 @@ class LimitedWalletTrackerService:
         alerts = self._alerts.get(user_id, [])
         return [
             {
-                "id": alert.id,
+                "id": getattr(alert, 'id', 0),
                 "wallet_address": alert.wallet_address,
                 "min_value_eth": (alert.min_value_eth or 0) / 10**18,
                 "track_incoming": alert.track_incoming,

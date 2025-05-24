@@ -97,16 +97,19 @@ class StructuredLogger:
     
     def _log(self, level: str, message: str, **kwargs):
         """Внутренний метод логирования."""
-        # Добавляем контекст модуля
+        # ИСПРАВЛЕНО: Убираем конфликтующие поля из extra
+        # Не добавляем 'module' в extra, так как это зарезервированное поле
         extra_data = {
-            'module': self.module_name,
+            'source_module': self.module_name,  # ИСПРАВЛЕНО: переименовано с 'module'
             'timestamp': datetime.utcnow().isoformat(),
-            **kwargs
+            **{k: v for k, v in kwargs.items() if k not in ['module', 'name', 'msg', 'args']}  # ИСПРАВЛЕНО: фильтруем зарезервированные поля
         }
         
         # Если есть дополнительные данные, добавляем их к сообщению
         if kwargs:
-            message += f" | {json.dumps(kwargs, default=str)}"
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['module', 'name', 'msg', 'args']}
+            if filtered_kwargs:
+                message += f" | {json.dumps(filtered_kwargs, default=str)}"
         
         getattr(self.logger, level.lower())(message, extra=extra_data)
 
