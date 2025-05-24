@@ -1,56 +1,47 @@
-# modules/price_alerts/service.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-
-# Замените существующий файл этим содержимым:
+# modules/price_alerts/service.py
+"""Основной сервис ценовых алертов с полной функциональностью."""
 
 import asyncio
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from shared.events import event_bus, Event
 from shared.utils.logger import get_module_logger
 from shared.database.manager import DatabaseManager
 
-# Импортируем наши WebSocket компоненты
-from .websocket import BinanceWebSocketClient, WebSocketConfig
-from .services.token_service import TokenService
+from .core.candle_processor import CandleProcessor
+from .core.alert_dispatcher import AlertDispatcher
+from .core.preset_manager import PresetManager
+from .core.websocket_manager import WebSocketManager
+from .core.token_manager import TokenManager
 
 logger = get_module_logger("price_alerts")
 
 
 class PriceAlertsService:
-    """Основной сервис ценовых алертов."""
+    """Основной сервис ценовых алертов с автономной архитектурой."""
     
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db_manager = db_manager
-        
-        # Сервисы (пока заглушки)
-        self.token_service: Optional[TokenService] = None
-        self.websocket_client: Optional[BinanceWebSocketClient] = None
-        
         self.running = False
         
-        # Подписываемся на события
-        event_bus.subscribe("price_alerts.create_preset", self._handle_create_preset)
-        event_bus.subscribe("price_alerts.get_all_tokens", self._handle_get_tokens)
+        # Основные компоненты
+        self.token_manager = TokenManager()
+        self.preset_manager = PresetManager(db_manager)
+        self.alert_dispatcher = AlertDispatcher()
+        self.candle_processor = CandleProcessor(self.alert_dispatcher, self.preset_manager)
+        self.websocket_manager = WebSocketManager(self.candle_processor.process_candle)
+        
+        # Подписываемся на внешние события
+        self._setup_event_handlers()
     
-    async def initialize(self) -> None:
-        """Инициализация сервиса."""
-        try:
-            logger.info("Initializing Price Alerts service...")
-            
-            # Создаем заглушку для token service
-            self.token_service = MockTokenService()
-            
-            # Создаем WebSocket клиент
-            ws_config = WebSocketConfig()
-            self.websocket_client = BinanceWebSocketClient(
-                config=ws_config,
-                on_message_callback=self._handle_candle_message
-            )
-            
-            logger.info("Price Alerts service initialized")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Price Alerts: {e}")
-            raise
+    def _setup_event_handlers(self):
+        """Настройка обработчиков событий."""
+        event_bus.subscribe("price_alerts.create_preset", self._handle_create_preset)
+        event_bus.subscribe("price_alerts.activate_preset", self._handle_activate_preset)
+        event_bus.subscribe("price_alerts.deactivate_preset", self._handle_deactivate_preset)
+        event_bus.subscribe("price_alerts.get_user_presets", self._handle_get_user_presets)
+        event_bus.subscribe("price_alerts.get_all_tokens", self._handle_get_tokens)
+        event_bus.subscribe("price_alerts.start_monitoring", self._handle_start_monitoring)
+        event_bus.subscribe("price_alerts.stop_monitoring", self._handle_stop_monitoring)
     
     async def start(self) -> None:
         """Запуск сервиса."""
@@ -61,12 +52,14 @@ class PriceAlertsService:
         logger.info("Starting Price Alerts service...")
         
         try:
-            # Генерируем стримы для популярных пар
-            streams = self._generate_test_streams()
+            # Инициализируем компоненты в правильном порядке
+            await self.token_manager.initialize()
+            await self.preset_manager.initialize()
+            await self.alert_dispatcher.start()
+            await self.candle_processor.start()
             
-            if streams and self.websocket_client:
-                # Запускаем WebSocket в отдельной задаче
-                asyncio.create_task(self.websocket_client.start(streams))
+            # WebSocket запускается только если есть активные пресеты
+            await self._check_and_start_websocket()
             
             await event_bus.publish(Event(
                 type="system.module_started",
@@ -74,10 +67,10 @@ class PriceAlertsService:
                 source_module="price_alerts"
             ))
             
-            logger.info("Price Alerts service started")
+            logger.info("Price Alerts service started successfully")
             
         except Exception as e:
-            logger.error(f"Failed to start Price Alerts: {e}")
+            logger.error(f"Failed to start Price Alerts service: {e}")
             self.running = False
             raise
     
@@ -90,8 +83,10 @@ class PriceAlertsService:
         self.running = False
         
         try:
-            if self.websocket_client:
-                await self.websocket_client.stop()
+            # Останавливаем компоненты в обратном порядке
+            await self.websocket_manager.stop()
+            await self.candle_processor.stop()
+            await self.alert_dispatcher.stop()
             
             await event_bus.publish(Event(
                 type="system.module_stopped",
@@ -102,92 +97,96 @@ class PriceAlertsService:
             logger.info("Price Alerts service stopped")
             
         except Exception as e:
-            logger.error(f"Error stopping Price Alerts: {e}")
+            logger.error(f"Error stopping Price Alerts service: {e}")
     
-    def _generate_test_streams(self) -> List[str]:
-        """Генерация тестовых стримов для популярных пар."""
-        # Популярные пары для тестирования
-        popular_pairs = [
-            "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
-            "XRPUSDT", "DOTUSDT", "DOGEUSDT", "AVAXUSDT", "MATICUSDT"
-        ]
+    async def _check_and_start_websocket(self):
+        """Проверка и запуск WebSocket если есть активные пресеты."""
+        active_streams = await self.preset_manager.get_required_streams()
         
-        # Интервалы
-        intervals = ["1m", "5m", "15m", "1h"]
-        
-        # Генерируем стримы
-        streams = []
-        for pair in popular_pairs:
-            for interval in intervals:
-                streams.append(f"{pair.lower()}@kline_{interval}")
-        
-        logger.info(f"Generated {len(streams)} WebSocket streams")
-        return streams
+        if active_streams:
+            await self.websocket_manager.start(active_streams)
+            logger.info(f"Started WebSocket with {len(active_streams)} streams")
+        else:
+            logger.info("No active presets, WebSocket not started")
     
-    async def _handle_candle_message(self, candle_data: Dict[str, Any]) -> None:
-        """Обработка сообщения свечи от WebSocket."""
-        try:
-            # Простой анализ изменения цены
-            open_price = candle_data['open']
-            close_price = candle_data['close']
-            
-            if open_price > 0:
-                change_percent = ((close_price - open_price) / open_price) * 100
-                
-                # Если изменение больше 2%, отправляем тестовый алерт
-                if abs(change_percent) > 2.0:
-                    direction = "🟢" if change_percent > 0 else "🔴"
-                    
-                    await event_bus.publish(Event(
-                        type="price_alert.triggered",
-                        data={
-                            "user_id": 123456789,  # Тестовый user_id
-                            "message": (
-                                f"{direction} {candle_data['symbol']} {candle_data['interval']}: "
-                                f"{abs(change_percent):.2f}% "
-                                f"(${close_price:.4f})"
-                            )
-                        },
-                        source_module="price_alerts"
-                    ))
-                    
-                    logger.info(
-                        f"Price alert: {candle_data['symbol']} {change_percent:.2f}%"
-                    )
-                    
-        except Exception as e:
-            logger.error(f"Error processing candle: {e}")
-    
-    async def _handle_create_preset(self, event: Event) -> None:
-        """Обработка создания пресета."""
+    async def _handle_create_preset(self, event: Event):
+        """Создание пресета."""
         try:
             user_id = event.data.get("user_id")
             preset_data = event.data.get("preset_data")
             
-            logger.info(f"Creating preset for user {user_id}: {preset_data}")
+            preset_id = await self.preset_manager.create_preset(user_id, preset_data)
             
-            # Заглушка - возвращаем успех
             await event_bus.publish(Event(
                 type="price_alerts.preset_created",
-                data={
-                    "user_id": user_id, 
-                    "preset_id": "test-preset-123",
-                    "success": True
-                },
+                data={"user_id": user_id, "preset_id": preset_id, "success": preset_id is not None},
                 source_module="price_alerts"
             ))
             
         except Exception as e:
             logger.error(f"Error creating preset: {e}")
     
-    async def _handle_get_tokens(self, event: Event) -> None:
-        """Обработка запроса списка токенов."""
+    async def _handle_activate_preset(self, event: Event):
+        """Активация пресета."""
         try:
-            # Возвращаем популярные токены
-            tokens = [
-                "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
-                "XRPUSDT", "DOTUSDT", "DOGEUSDT", "AVAXUSDT", "MATICUSDT"
-            ]
+            user_id = event.data.get("user_id")
+            preset_id = event.data.get("preset_id")
+            
+            success = await self.preset_manager.activate_preset(user_id, preset_id)
+            
+            if success:
+                # Обновляем WebSocket стримы
+                await self._update_websocket_streams()
+            
+            await event_bus.publish(Event(
+                type="price_alerts.preset_activated",
+                data={"user_id": user_id, "preset_id": preset_id, "success": success},
+                source_module="price_alerts"
+            ))
+            
+        except Exception as e:
+            logger.error(f"Error activating preset: {e}")
+    
+    async def _handle_deactivate_preset(self, event: Event):
+        """Деактивация пресета."""
+        try:
+            user_id = event.data.get("user_id")
+            preset_id = event.data.get("preset_id")
+            
+            success = await self.preset_manager.deactivate_preset(user_id, preset_id)
+            
+            if success:
+                # Обновляем WebSocket стримы
+                await self._update_websocket_streams()
+            
+            await event_bus.publish(Event(
+                type="price_alerts.preset_deactivated",
+                data={"user_id": user_id, "preset_id": preset_id, "success": success},
+                source_module="price_alerts"
+            ))
+            
+        except Exception as e:
+            logger.error(f"Error deactivating preset: {e}")
+    
+    async def _handle_get_user_presets(self, event: Event):
+        """Получение пресетов пользователя."""
+        try:
+            user_id = event.data.get("user_id")
+            presets = await self.preset_manager.get_user_presets(user_id)
+            
+            await event_bus.publish(Event(
+                type="price_alerts.user_presets_response",
+                data={"user_id": user_id, "presets": presets},
+                source_module="price_alerts"
+            ))
+            
+        except Exception as e:
+            logger.error(f"Error getting user presets: {e}")
+    
+    async def _handle_get_tokens(self, event: Event):
+        """Получение списка токенов."""
+        try:
+            tokens = self.token_manager.get_all_tokens()
             
             await event_bus.publish(Event(
                 type="price_alerts.tokens_response",
@@ -197,16 +196,49 @@ class PriceAlertsService:
             
         except Exception as e:
             logger.error(f"Error getting tokens: {e}")
-
-
-class MockTokenService:
-    """Заглушка для TokenService."""
     
-    def get_all_tokens(self) -> List[str]:
-        return [
-            "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
-            "XRPUSDT", "DOTUSDT", "DOGEUSDT", "AVAXUSDT", "MATICUSDT"
-        ]
+    async def _handle_start_monitoring(self, event: Event):
+        """Запуск мониторинга для пользователя."""
+        try:
+            user_id = event.data.get("user_id")
+            await self.preset_manager.set_user_monitoring(user_id, True)
+            
+            # Перезапускаем WebSocket если нужно
+            await self._update_websocket_streams()
+            
+        except Exception as e:
+            logger.error(f"Error starting monitoring: {e}")
     
-    def get_all_timeframes(self) -> List[str]:
-        return ["1m", "5m", "15m", "1h", "4h", "1d"]
+    async def _handle_stop_monitoring(self, event: Event):
+        """Остановка мониторинга для пользователя."""
+        try:
+            user_id = event.data.get("user_id")
+            await self.preset_manager.set_user_monitoring(user_id, False)
+            
+            # Очищаем очереди алертов для пользователя
+            await self.alert_dispatcher.cleanup_user_queue(user_id)
+            
+            # Обновляем WebSocket стримы
+            await self._update_websocket_streams()
+            
+        except Exception as e:
+            logger.error(f"Error stopping monitoring: {e}")
+    
+    async def _update_websocket_streams(self):
+        """Обновление WebSocket стримов на основе активных пресетов."""
+        if not self.running:
+            return
+        
+        required_streams = await self.preset_manager.get_required_streams()
+        await self.websocket_manager.update_streams(required_streams)
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Получение статистики сервиса."""
+        return {
+            "running": self.running,
+            "token_manager": self.token_manager.get_stats(),
+            "preset_manager": self.preset_manager.get_stats(),
+            "candle_processor": self.candle_processor.get_stats(),
+            "alert_dispatcher": self.alert_dispatcher.get_stats(),
+            "websocket_manager": self.websocket_manager.get_stats()
+        }

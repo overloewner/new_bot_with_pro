@@ -8,8 +8,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from shared.events import event_bus, Event, MESSAGE_SENT, USER_COMMAND_RECEIVED
 from modules.telegram.handlers.main_handler import MainHandler
-from modules.telegram.handlers.price_alerts_handler import PriceAlertsHandler
+
 from modules.telegram.middleware.logging_middleware import LoggingMiddleware
+from modules.price_alerts.handlers import PriceAlertsHandler
 
 import logging
 
@@ -75,9 +76,10 @@ class TelegramService:
         main_handler = MainHandler()
         main_handler.register(self.dp)
         
-        # Регистрируем обработчик ценовых алертов
+       # Price alerts обработчик
+
         price_handler = PriceAlertsHandler()
-        price_handler.register(self.dp)
+        price_handler.register_handlers(self.dp)
         
         logger.info("Telegram handlers registered")
     

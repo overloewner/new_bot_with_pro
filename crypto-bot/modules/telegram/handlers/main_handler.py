@@ -5,7 +5,7 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
+from modules.price_alerts.handlers import PriceAlertsHandler
 from shared.events import event_bus, Event, USER_COMMAND_RECEIVED
 from modules.telegram.keyboards.main_keyboards import MainKeyboards
 
@@ -138,6 +138,9 @@ class MainHandler:
     async def show_price_alerts(self, callback: types.CallbackQuery):
         """Переход к модулю ценовых алертов."""
         # Публикуем событие для модуля price_alerts
+        handler = PriceAlertsHandler()
+        await handler.show_main_menu(callback)
+        
         await event_bus.publish(Event(
             type="telegram.show_module",
             data={
