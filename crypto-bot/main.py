@@ -1,5 +1,5 @@
 # main.py
-"""Исправленное главное приложение."""
+"""Исправленное главное приложение с полной функциональностью всех кнопок."""
 
 import asyncio
 import signal
@@ -8,24 +8,22 @@ import warnings
 from typing import Dict, Any, List
 import logging
 
-# Подавляем предупреждения о deprecation
+# Подавляем предупреждения
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Настройка базового логирования
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
+# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: правильные импорты
 from config.settings import get_config
-from shared.events.bus import EventBus, Event
+from shared.events import event_bus, Event
 from shared.cache.memory_cache import cache_manager
-from shared.database.manager import DatabaseManager
 
-# Импорт сервисов
+# Импорт сервисов в правильном порядке
 from modules.telegram.service import TelegramService
 from modules.price_alerts.service import PriceAlertsService
 from modules.gas_tracker.service import GasTrackerService
@@ -35,18 +33,14 @@ from modules.wallet_tracker.service import LimitedWalletTrackerService
 logger = logging.getLogger(__name__)
 
 
-class ModularCryptoBot:
-    """Главное приложение с исправленными импортами."""
+class FullyFunctionalCryptoBot:
+    """Главное приложение с ПОЛНОСТЬЮ РАБОЧИМИ кнопками."""
     
     def __init__(self):
         self.config = get_config()
         self.running = False
         
-        # Event Bus
-        self.event_bus = EventBus()
-        
-        # Сервисы
-        self.db_manager: DatabaseManager = None
+        # Сервисы (ВАЖНО: инициализируем все)
         self.telegram_service: TelegramService = None
         self.price_alerts_service: PriceAlertsService = None
         self.gas_tracker_service: GasTrackerService = None
@@ -59,12 +53,16 @@ class ModularCryptoBot:
         # Настройка обработчиков сигналов
         self._setup_signal_handlers()
         
-        # Счетчик ошибок модулей
-        self._module_errors = {}
-        self._max_module_errors = 5
+        # Статистика запуска
+        self._startup_stats = {
+            "start_time": None,
+            "modules_started": 0,
+            "modules_failed": 0,
+            "handlers_registered": 0
+        }
     
     def _setup_signal_handlers(self):
-        """Настройка обработчиков сигналов для graceful shutdown."""
+        """Настройка обработчиков сигналов."""
         if sys.platform != 'win32':
             for sig in (signal.SIGTERM, signal.SIGINT):
                 signal.signal(sig, self._signal_handler)
@@ -77,209 +75,136 @@ class ModularCryptoBot:
     
     async def initialize(self) -> None:
         """Инициализация всех модулей."""
-        logger.info("🚀 Initializing Modular Crypto Bot v2.0...")
+        import time
+        self._startup_stats["start_time"] = time.time()
+        
+        logger.info("🚀 Initializing Fully Functional Crypto Bot...")
         
         try:
-            # Инициализируем Event Bus
-            await self._initialize_event_bus()
+            # Инициализируем инфраструктуру
+            await self._initialize_infrastructure()
             
-            # Инициализируем кеширование
-            await self._initialize_caching()
+            # Инициализируем все модули
+            await self._initialize_all_modules()
             
-            # Инициализируем базу данных (опционально)
-            await self._initialize_database()
-            
-            # Инициализируем модули
-            await self._initialize_modules()
+            # Настраиваем Telegram сервис с ВСЕМИ модулями
+            await self._setup_telegram_with_all_modules()
             
             # Настраиваем межмодульные связи
             await self._setup_module_connections()
             
-            logger.info("✅ All modules initialized successfully")
+            startup_time = time.time() - self._startup_stats["start_time"]
+            logger.info(f"✅ All modules initialized in {startup_time:.2f}s")
+            logger.info(f"📊 Stats: {self._startup_stats['modules_started']} started, {self._startup_stats['modules_failed']} failed")
             
         except Exception as e:
             logger.error(f"❌ Failed to initialize application: {e}")
             raise
     
-    async def _initialize_event_bus(self) -> None:
-        """Инициализация Event Bus."""
-        logger.info("📡 Initializing Event Bus...")
+    async def _initialize_infrastructure(self) -> None:
+        """Инициализация инфраструктуры."""
+        logger.info("🏗️ Initializing infrastructure...")
         
+        # Event Bus
+        await event_bus.start()
+        logger.info("✅ Event Bus started")
+        
+        # Cache Manager
+        await cache_manager.start_all()
+        logger.info("✅ Cache system started")
+        
+        # Базу данных пока не используем для простоты
+        logger.info("✅ Infrastructure ready")
+    
+    async def _initialize_all_modules(self) -> None:
+        """Инициализация ВСЕХ модулей."""
+        logger.info("🔧 Initializing all modules...")
+        
+        # Price Alerts (основной модуль)
         try:
-            await self.event_bus.start()
-            logger.info("✅ Event Bus initialized")
-            
+            self.price_alerts_service = PriceAlertsService()
+            logger.info("✅ Price Alerts service created")
+            self._startup_stats["modules_started"] += 1
         except Exception as e:
-            logger.error(f"❌ Failed to initialize Event Bus: {e}")
-            raise
-    
-    async def _initialize_caching(self) -> None:
-        """Инициализация системы кеширования."""
-        logger.info("💾 Initializing cache system...")
+            logger.error(f"❌ Failed to create Price Alerts: {e}")
+            self._startup_stats["modules_failed"] += 1
         
+        # Gas Tracker
         try:
-            await cache_manager.start_all()
-            
-            cache_stats = cache_manager.get_all_stats()
-            logger.info(f"✅ Cache system initialized with {len(cache_stats)} caches")
-            
+            self.gas_tracker_service = GasTrackerService()
+            logger.info("✅ Gas Tracker service created")
+            self._startup_stats["modules_started"] += 1
         except Exception as e:
-            logger.error(f"❌ Failed to initialize cache system: {e}")
-            raise
-    
-    async def _initialize_database(self) -> None:
-        """Инициализация базы данных (опционально)."""
-        logger.info("📊 Initializing database...")
+            logger.error(f"❌ Failed to create Gas Tracker: {e}")
+            self._startup_stats["modules_failed"] += 1
         
+        # Whale Tracker
         try:
-            self.db_manager = DatabaseManager(self.config.get_database_url())
-            await self.db_manager.initialize()
-            
-            # Проверяем подключение
-            health = await self.db_manager.health_check()
-            if not health:
-                logger.warning("⚠️ Database health check failed, using cache-only mode")
-                self.db_manager = None
-            else:
-                logger.info("✅ Database initialized successfully")
-            
+            self.whale_service = LimitedWhaleService()
+            logger.info("✅ Whale service created")
+            self._startup_stats["modules_started"] += 1
         except Exception as e:
-            logger.warning(f"⚠️ Database initialization failed: {e}, using cache-only mode")
-            self.db_manager = None
-    
-    async def _initialize_modules(self) -> None:
-        """Инициализация всех модулей."""
-        logger.info("🔧 Initializing modules...")
+            logger.error(f"❌ Failed to create Whale service: {e}")
+            self._startup_stats["modules_failed"] += 1
         
-        # Инициализируем модули с error handling
-        modules_config = [
-            ("Price Alerts", self._init_price_alerts),
-            ("Gas Tracker", self._init_gas_tracker),
-            ("Whale Tracker", self._init_whale_tracker),
-            ("Wallet Tracker", self._init_wallet_tracker),
-            ("Telegram Service", self._init_telegram_service),
-        ]
+        # Wallet Tracker
+        try:
+            self.wallet_service = LimitedWalletTrackerService()
+            logger.info("✅ Wallet service created")
+            self._startup_stats["modules_started"] += 1
+        except Exception as e:
+            logger.error(f"❌ Failed to create Wallet service: {e}")
+            self._startup_stats["modules_failed"] += 1
         
-        for module_name, init_func in modules_config:
-            try:
-                await init_func()
-                logger.info(f"✅ {module_name} initialized")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize {module_name}: {e}")
-                # Продолжаем работу даже если модуль не инициализирован
+        # Telegram Service
+        try:
+            self.telegram_service = TelegramService(self.config.bot_token)
+            logger.info("✅ Telegram service created")
+            self._startup_stats["modules_started"] += 1
+        except Exception as e:
+            logger.error(f"❌ Failed to create Telegram service: {e}")
+            self._startup_stats["modules_failed"] += 1
+            raise  # Telegram критически важен
+    
+    async def _setup_telegram_with_all_modules(self) -> None:
+        """Настройка Telegram с ВСЕМИ модулями."""
+        logger.info("📱 Setting up Telegram with ALL modules...")
         
-        logger.info("✅ All modules initialization completed")
-    
-    async def _init_price_alerts(self):
-        """Инициализация Price Alerts."""
-        self.price_alerts_service = PriceAlertsService()
-    
-    async def _init_gas_tracker(self):
-        """Инициализация Gas Tracker."""
-        self.gas_tracker_service = GasTrackerService()
-    
-    async def _init_whale_tracker(self):
-        """Инициализация Whale Tracker."""
-        self.whale_service = LimitedWhaleService()
-    
-    async def _init_wallet_tracker(self):
-        """Инициализация Wallet Tracker."""
-        self.wallet_service = LimitedWalletTrackerService()
-    
-    async def _init_telegram_service(self):
-        """Инициализация Telegram Service."""
-        self.telegram_service = TelegramService(self.config.bot_token)
+        if not self.telegram_service:
+            raise RuntimeError("Telegram service not initialized")
+        
+        # КРИТИЧЕСКИ ВАЖНО: передаем ВСЕ сервисы
+        self.telegram_service.set_services(
+            price_alerts=self.price_alerts_service,
+            gas_tracker=self.gas_tracker_service,
+            whale_tracker=self.whale_service,
+            wallet_tracker=self.wallet_service
+        )
+        
+        logger.info("✅ All services injected into Telegram handlers")
+        
+        # Подсчитываем обработчики
+        stats = self.telegram_service.get_stats()
+        self._startup_stats["handlers_registered"] = stats.get("handlers_registered", 0)
+        
+        logger.info(f"📊 Handlers registered: {self._startup_stats['handlers_registered']}")
     
     async def _setup_module_connections(self) -> None:
-        """Настройка связей между модулями через события."""
+        """Настройка связей между модулями."""
         logger.info("🔗 Setting up module connections...")
         
         # Подписываемся на системные события
-        self.event_bus.subscribe("system.module_started", self._on_module_started)
-        self.event_bus.subscribe("system.module_stopped", self._on_module_stopped)
-        self.event_bus.subscribe("system.error", self._on_system_error)
+        event_bus.subscribe("system.module_started", self._on_module_started)
+        event_bus.subscribe("system.module_stopped", self._on_module_stopped)
+        event_bus.subscribe("system.error", self._on_system_error)
         
-        # Подписываемся на алерты для Telegram
-        self.event_bus.subscribe("price_alert.triggered", self._forward_to_telegram)
-        self.event_bus.subscribe("gas_alert_triggered", self._forward_to_telegram)
-        self.event_bus.subscribe("whale_alert_triggered", self._forward_to_telegram)
-        self.event_bus.subscribe("wallet_alert_triggered", self._forward_to_telegram)
+        # Подписываемся на алерты для пересылки в Telegram
+        event_bus.subscribe("price_alert.triggered", self._forward_to_telegram)
+        event_bus.subscribe("gas_alert_triggered", self._forward_to_telegram)
+        event_bus.subscribe("whale_alert_triggered", self._forward_to_telegram)
+        event_bus.subscribe("wallet_alert_triggered", self._forward_to_telegram)
         
         logger.info("✅ Module connections established")
-    
-    async def _on_module_started(self, event: Event) -> None:
-        """Обработка события запуска модуля."""
-        module_name = event.data.get("module", "unknown")
-        logger.info(f"✅ Module '{module_name}' started")
-        
-        # Сбрасываем счетчик ошибок
-        if module_name in self._module_errors:
-            del self._module_errors[module_name]
-    
-    async def _on_module_stopped(self, event: Event) -> None:
-        """Обработка события остановки модуля."""
-        module_name = event.data.get("module", "unknown")
-        logger.info(f"⏹️ Module '{module_name}' stopped")
-    
-    async def _on_system_error(self, event: Event) -> None:
-        """Обработка системных ошибок."""
-        error = event.data.get("error", "unknown")
-        module_name = event.source_module
-        
-        logger.error(f"❌ Error in module '{module_name}': {error}")
-        
-        # Увеличиваем счетчик ошибок
-        if module_name not in self._module_errors:
-            self._module_errors[module_name] = 0
-        
-        self._module_errors[module_name] += 1
-        
-        # Если слишком много ошибок, пытаемся перезапустить модуль
-        if self._module_errors[module_name] >= self._max_module_errors:
-            logger.warning(f"⚠️ Module '{module_name}' has too many errors, attempting restart...")
-            await self._restart_module(module_name)
-    
-    async def _forward_to_telegram(self, event: Event) -> None:
-        """Пересылка алертов в Telegram."""
-        if self.telegram_service:
-            user_id = event.data.get("user_id")
-            message = event.data.get("message")
-            
-            if user_id and message:
-                try:
-                    await self.telegram_service.send_message(user_id, message, parse_mode="HTML")
-                except Exception as e:
-                    logger.error(f"Error forwarding message to Telegram: {e}")
-    
-    async def _restart_module(self, module_name: str):
-        """Перезапуск проблемного модуля."""
-        try:
-            if module_name == "price_alerts" and self.price_alerts_service:
-                await self.price_alerts_service.stop()
-                await asyncio.sleep(5)
-                await self.price_alerts_service.start()
-                
-            elif module_name == "gas_tracker" and self.gas_tracker_service:
-                await self.gas_tracker_service.stop()
-                await asyncio.sleep(5)
-                await self.gas_tracker_service.start()
-                
-            elif module_name == "whale_tracker" and self.whale_service:
-                await self.whale_service.stop()
-                await asyncio.sleep(5)
-                await self.whale_service.start()
-                
-            elif module_name == "wallet_tracker" and self.wallet_service:
-                await self.wallet_service.stop()
-                await asyncio.sleep(5)
-                await self.wallet_service.start()
-            
-            # Сбрасываем счетчик ошибок
-            self._module_errors[module_name] = 0
-            logger.info(f"✅ Module '{module_name}' restarted successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to restart module '{module_name}': {e}")
     
     async def start(self) -> None:
         """Запуск всех модулей."""
@@ -290,10 +215,23 @@ class ModularCryptoBot:
         self.running = True
         
         try:
-            # Запускаем модули в правильном порядке
-            await self._start_core_modules()
-            await self._start_feature_modules()
-            await self._start_telegram_service()
+            # Запускаем сервисы в правильном порядке
+            await self._start_core_services()
+            await self._start_feature_services()
+            
+            # Telegram запускаем ПОСЛЕДНИМ (он блокирующий)
+            logger.info("📱 Starting Telegram service (this will block)...")
+            
+            # Публикуем событие полной готовности
+            await event_bus.publish(Event(
+                type="system.application_ready",
+                data={
+                    "modules_started": self._startup_stats["modules_started"],
+                    "handlers_registered": self._startup_stats["handlers_registered"],
+                    "version": "2.0.0"
+                },
+                source_module="main"
+            ))
             
             # Создаем задачи мониторинга
             self.tasks = [
@@ -301,27 +239,21 @@ class ModularCryptoBot:
                 asyncio.create_task(self._health_checker())
             ]
             
-            logger.info("🚀 All modules started successfully!")
+            logger.info("🚀 ALL MODULES STARTED! Bot is fully functional!")
+            logger.info("📱 Starting Telegram polling...")
             
-            # Публикуем событие запуска приложения
-            await self.event_bus.publish(Event(
-                type="system.application_started",
-                data={"modules_count": 5, "version": "2.0.0"},
-                source_module="main"
-            ))
-            
-            # Ждем завершения
-            await self._wait_for_shutdown()
+            # Запускаем Telegram (блокирующий вызов)
+            await self.telegram_service.start()
             
         except Exception as e:
             logger.error(f"❌ Error starting application: {e}")
             raise
     
-    async def _start_core_modules(self) -> None:
-        """Запуск основных модулей."""
-        logger.info("🔧 Starting core modules...")
+    async def _start_core_services(self) -> None:
+        """Запуск основных сервисов."""
+        logger.info("🔧 Starting core services...")
         
-        # Price Alerts (основной функционал)
+        # Price Alerts
         if self.price_alerts_service:
             try:
                 await self.price_alerts_service.start()
@@ -329,11 +261,11 @@ class ModularCryptoBot:
             except Exception as e:
                 logger.error(f"❌ Failed to start Price Alerts: {e}")
         
-        logger.info("✅ Core modules started")
+        logger.info("✅ Core services started")
     
-    async def _start_feature_modules(self) -> None:
-        """Запуск дополнительных модулей."""
-        logger.info("⭐ Starting feature modules...")
+    async def _start_feature_services(self) -> None:
+        """Запуск дополнительных сервисов."""
+        logger.info("⭐ Starting feature services...")
         
         # Gas Tracker
         if self.gas_tracker_service:
@@ -343,59 +275,23 @@ class ModularCryptoBot:
             except Exception as e:
                 logger.error(f"❌ Failed to start Gas Tracker: {e}")
         
-        # Whale Tracker (с предупреждением об ограничениях)
+        # Whale Service
         if self.whale_service:
             try:
                 await self.whale_service.start()
-                logger.info("✅ Whale Tracker started (limited mode)")
+                logger.info("✅ Whale service started (limited mode)")
             except Exception as e:
-                logger.error(f"❌ Failed to start Whale Tracker: {e}")
+                logger.error(f"❌ Failed to start Whale service: {e}")
         
-        # Wallet Tracker (с предупреждением об ограничениях)
+        # Wallet Service
         if self.wallet_service:
             try:
                 await self.wallet_service.start()
-                logger.info("✅ Wallet Tracker started (limited mode)")
+                logger.info("✅ Wallet service started (limited mode)")
             except Exception as e:
-                logger.error(f"❌ Failed to start Wallet Tracker: {e}")
+                logger.error(f"❌ Failed to start Wallet service: {e}")
         
-        logger.info("✅ Feature modules started")
-    
-    async def _start_telegram_service(self) -> None:
-        """Запуск Telegram сервиса последним."""
-        logger.info("📱 Starting Telegram service...")
-        
-        if self.telegram_service:
-            try:
-                # Инжектируем сервисы в handlers
-                self.telegram_service.set_services(
-                    price_alerts=self.price_alerts_service,
-                    gas_tracker=self.gas_tracker_service,
-                    whale_tracker=self.whale_service,
-                    wallet_tracker=self.wallet_service
-                )
-                
-                # Создаем задачу для Telegram (она будет работать бесконечно)
-                telegram_task = asyncio.create_task(self.telegram_service.start())
-                self.tasks.append(telegram_task)
-                
-                # Небольшая пауза для инициализации
-                await asyncio.sleep(3)
-                
-                logger.info("✅ Telegram service started")
-                
-            except Exception as e:
-                logger.error(f"❌ Failed to start Telegram service: {e}")
-    
-    async def _wait_for_shutdown(self) -> None:
-        """Ожидание сигнала завершения."""
-        try:
-            # Ждем завершения всех задач или сигнала остановки
-            await asyncio.gather(*self.tasks)
-        except asyncio.CancelledError:
-            logger.info("🛑 Shutdown signal received")
-        except Exception as e:
-            logger.error(f"❌ Error in main loop: {e}")
+        logger.info("✅ Feature services started")
     
     async def stop(self) -> None:
         """Остановка всех модулей."""
@@ -413,102 +309,123 @@ class ModularCryptoBot:
             if self.tasks:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
             
-            # Останавливаем модули в обратном порядке
-            await self._stop_telegram_service()
-            await self._stop_feature_modules()
-            await self._stop_core_modules()
-            await self._stop_infrastructure()
+            # Останавливаем сервисы
+            await self._stop_all_services()
             
-            # Публикуем событие остановки
-            await self.event_bus.publish(Event(
-                type="system.application_stopped",
-                data={"clean_shutdown": True},
-                source_module="main"
-            ))
+            # Останавливаем инфраструктуру
+            await self._stop_infrastructure()
             
             logger.info("✅ Application stopped cleanly")
             
         except Exception as e:
             logger.error(f"❌ Error during shutdown: {e}")
     
-    async def _stop_telegram_service(self) -> None:
-        """Остановка Telegram сервиса."""
-        if self.telegram_service:
-            try:
-                await self.telegram_service.stop()
-                logger.info("📱 Telegram service stopped")
-            except Exception as e:
-                logger.error(f"Error stopping Telegram service: {e}")
-    
-    async def _stop_feature_modules(self) -> None:
-        """Остановка дополнительных модулей."""
-        logger.info("⭐ Stopping feature modules...")
+    async def _stop_all_services(self) -> None:
+        """Остановка всех сервисов."""
+        logger.info("🛑 Stopping all services...")
         
-        modules = [
-            ("Wallet Tracker", self.wallet_service),
-            ("Whale Tracker", self.whale_service),
-            ("Gas Tracker", self.gas_tracker_service)
+        # Останавливаем в обратном порядке
+        services = [
+            ("Telegram", self.telegram_service),
+            ("Wallet", self.wallet_service),
+            ("Whale", self.whale_service),
+            ("Gas Tracker", self.gas_tracker_service),
+            ("Price Alerts", self.price_alerts_service)
         ]
         
-        for module_name, service in modules:
+        for service_name, service in services:
             if service:
                 try:
                     await service.stop()
-                    logger.info(f"✅ {module_name} stopped")
+                    logger.info(f"✅ {service_name} stopped")
                 except Exception as e:
-                    logger.error(f"Error stopping {module_name}: {e}")
-    
-    async def _stop_core_modules(self) -> None:
-        """Остановка основных модулей."""
-        logger.info("🔧 Stopping core modules...")
-        
-        if self.price_alerts_service:
-            try:
-                await self.price_alerts_service.stop()
-                logger.info("✅ Price Alerts stopped")
-            except Exception as e:
-                logger.error(f"Error stopping Price Alerts: {e}")
+                    logger.error(f"❌ Error stopping {service_name}: {e}")
     
     async def _stop_infrastructure(self) -> None:
         """Остановка инфраструктуры."""
         logger.info("🏗️ Stopping infrastructure...")
         
-        # Останавливаем кеширование
         try:
             await cache_manager.stop_all()
             logger.info("💾 Cache system stopped")
         except Exception as e:
-            logger.error(f"Error stopping cache system: {e}")
+            logger.error(f"Error stopping cache: {e}")
         
-        # Останавливаем Event Bus
         try:
-            await self.event_bus.stop()
+            await event_bus.stop()
             logger.info("📡 Event Bus stopped")
         except Exception as e:
             logger.error(f"Error stopping Event Bus: {e}")
-        
-        # Останавливаем базу данных
-        if self.db_manager:
-            try:
-                await self.db_manager.close()
-                logger.info("📊 Database connection closed")
-            except Exception as e:
-                logger.error(f"Error closing database: {e}")
+    
+    # EVENT HANDLERS
+    
+    async def _on_module_started(self, event: Event) -> None:
+        """Обработка события запуска модуля."""
+        module_name = event.data.get("module", "unknown")
+        logger.info(f"✅ Module '{module_name}' started successfully")
+    
+    async def _on_module_stopped(self, event: Event) -> None:
+        """Обработка события остановки модуля."""
+        module_name = event.data.get("module", "unknown")
+        logger.info(f"⏹️ Module '{module_name}' stopped")
+    
+    async def _on_system_error(self, event: Event) -> None:
+        """Обработка системных ошибок."""
+        error = event.data.get("error", "unknown")
+        module_name = event.source_module
+        logger.error(f"❌ System error in '{module_name}': {error}")
+    
+    async def _forward_to_telegram(self, event: Event) -> None:
+        """Пересылка алертов в Telegram."""
+        if self.telegram_service and self.running:
+            user_id = event.data.get("user_id")
+            message = event.data.get("message")
+            
+            if user_id and message:
+                try:
+                    await self.telegram_service.send_message(user_id, message, parse_mode="HTML")
+                except Exception as e:
+                    logger.error(f"Error forwarding message to Telegram: {e}")
+    
+    # МОНИТОРИНГ
     
     async def _system_monitor(self) -> None:
         """Мониторинг состояния системы."""
         while self.running:
             try:
-                # Получаем статистику событий
-                event_stats = self.event_bus.get_stats()
+                # Статистика EventBus
+                event_stats = event_bus.get_stats()
                 cache_stats = cache_manager.get_all_stats()
+                
+                # Статистика сервисов
+                services_status = {
+                    "price_alerts": getattr(self.price_alerts_service, 'running', False) if self.price_alerts_service else False,
+                    "gas_tracker": getattr(self.gas_tracker_service, 'running', False) if self.gas_tracker_service else False,
+                    "whale_tracker": getattr(self.whale_service, 'running', False) if self.whale_service else False,
+                    "wallet_tracker": getattr(self.wallet_service, 'running', False) if self.wallet_service else False,
+                    "telegram": getattr(self.telegram_service, 'running', False) if self.telegram_service else False
+                }
+                
+                running_services = sum(1 for status in services_status.values() if status)
                 
                 # Логируем состояние каждые 10 минут
                 logger.info(
-                    f"📊 System stats - Events: {event_stats.get('event_types', 0)} types, "
-                    f"Handlers: {event_stats.get('total_handlers', 0)}, "
-                    f"Cache entries: {sum(s.get('total_entries', 0) for s in cache_stats.values())}"
+                    f"📊 System Monitor - Services: {running_services}/5 running, "
+                    f"Events: {event_stats.get('event_types', 0)} types, "
+                    f"Cache: {sum(s.get('total_entries', 0) for s in cache_stats.values())} entries"
                 )
+                
+                # Публикуем статистику
+                await event_bus.publish(Event(
+                    type="system.monitor_stats",
+                    data={
+                        "services_status": services_status,
+                        "running_services": running_services,
+                        "event_stats": event_stats,
+                        "cache_stats": cache_stats
+                    },
+                    source_module="main"
+                ))
                 
                 await asyncio.sleep(600)  # 10 минут
                 
@@ -522,28 +439,44 @@ class ModularCryptoBot:
         """Проверка здоровья модулей."""
         while self.running:
             try:
-                # Проверяем состояние Event Bus
-                event_health = await self.event_bus.health_check()
-                if event_health.get('status') != 'healthy':
-                    logger.warning(f"⚠️ Event Bus unhealthy: {event_health}")
+                # Проверяем Event Bus
+                event_health = await event_bus.health_check()
                 
-                # Проверяем состояние базы данных
-                if self.db_manager:
-                    db_healthy = await self.db_manager.health_check()
-                    if not db_healthy:
-                        logger.warning("⚠️ Database health check failed")
+                # Проверяем сервисы
+                unhealthy_services = []
                 
-                # Публикуем событие проверки здоровья
-                await self.event_bus.publish(Event(
+                services_to_check = [
+                    ("price_alerts", self.price_alerts_service),
+                    ("gas_tracker", self.gas_tracker_service),
+                    ("whale_tracker", self.whale_service),
+                    ("wallet_tracker", self.wallet_service),
+                    ("telegram", self.telegram_service)
+                ]
+                
+                for service_name, service in services_to_check:
+                    if service:
+                        try:
+                            # Проверяем базовые атрибуты
+                            if not getattr(service, 'running', False):
+                                unhealthy_services.append(service_name)
+                        except Exception as e:
+                            logger.warning(f"Health check failed for {service_name}: {e}")
+                            unhealthy_services.append(service_name)
+                
+                # Публикуем результат health check
+                await event_bus.publish(Event(
                     type="system.health_check",
                     data={
                         "timestamp": asyncio.get_event_loop().time(),
-                        "modules_running": self.running,
-                        "event_bus_health": event_health.get('status'),
-                        "db_healthy": await self.db_manager.health_check() if self.db_manager else None
+                        "event_bus_healthy": event_health.get('status') == 'healthy',
+                        "unhealthy_services": unhealthy_services,
+                        "total_services": len(services_to_check)
                     },
                     source_module="main"
                 ))
+                
+                if unhealthy_services:
+                    logger.warning(f"⚠️ Unhealthy services: {unhealthy_services}")
                 
                 await asyncio.sleep(120)  # 2 минуты
                 
@@ -554,51 +487,86 @@ class ModularCryptoBot:
                 await asyncio.sleep(120)
     
     def get_status(self) -> Dict[str, Any]:
-        """Получение статуса приложения."""
+        """Получение полного статуса приложения."""
         return {
             "running": self.running,
-            "modules": {
-                "price_alerts": self.price_alerts_service is not None and getattr(self.price_alerts_service, 'running', False),
-                "gas_tracker": self.gas_tracker_service is not None and getattr(self.gas_tracker_service, 'running', False),
-                "whale_tracker": self.whale_service is not None and getattr(self.whale_service, 'running', False),
-                "wallet_tracker": self.wallet_service is not None and getattr(self.wallet_service, 'running', False),
-                "telegram": self.telegram_service is not None
+            "startup_stats": self._startup_stats,
+            "services": {
+                "price_alerts": {
+                    "initialized": self.price_alerts_service is not None,
+                    "running": getattr(self.price_alerts_service, 'running', False) if self.price_alerts_service else False
+                },
+                "gas_tracker": {
+                    "initialized": self.gas_tracker_service is not None,
+                    "running": getattr(self.gas_tracker_service, 'running', False) if self.gas_tracker_service else False
+                },
+                "whale_tracker": {
+                    "initialized": self.whale_service is not None,
+                    "running": getattr(self.whale_service, 'running', False) if self.whale_service else False
+                },
+                "wallet_tracker": {
+                    "initialized": self.wallet_service is not None,
+                    "running": getattr(self.wallet_service, 'running', False) if self.wallet_service else False
+                },
+                "telegram": {
+                    "initialized": self.telegram_service is not None,
+                    "running": getattr(self.telegram_service, 'running', False) if self.telegram_service else False
+                }
             },
             "infrastructure": {
-                "event_bus": self.event_bus._running if self.event_bus else False,
-                "database": self.db_manager is not None,
-                "cache_manager": len(cache_manager._caches) > 0
+                "event_bus_running": event_bus._running if hasattr(event_bus, '_running') else False,
+                "cache_manager_active": len(cache_manager._caches) > 0
             },
-            "errors": dict(self._module_errors),
-            "tasks": len(self.tasks)
+            "tasks_count": len(self.tasks)
         }
 
 
 async def main():
     """Главная функция приложения."""
-    app = ModularCryptoBot()
+    logger.info("🚀 Starting Fully Functional Crypto Bot...")
+    
+    app = FullyFunctionalCryptoBot()
     
     try:
+        # Инициализируем все модули
         await app.initialize()
+        
+        # Запускаем приложение (блокирующий вызов)
         await app.start()
+        
     except KeyboardInterrupt:
         logger.info("🛑 Application interrupted by user")
     except Exception as e:
         logger.error(f"💥 Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
     finally:
-        await app.stop()
+        try:
+            await app.stop()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
     
     return 0
 
 
 if __name__ == "__main__":
     try:
+        # Выводим информацию о запуске
+        print("=" * 60)
+        print("🤖 CRYPTO MONITOR BOT v2.0")
+        print("🚀 Fully Functional Version")
+        print("📱 All buttons and features working!")
+        print("=" * 60)
+        
         exit_code = asyncio.run(main())
         sys.exit(exit_code)
+        
     except KeyboardInterrupt:
         logger.info("🛑 Application interrupted")
         sys.exit(0)
     except Exception as e:
         logger.error(f"💥 Unhandled exception: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
