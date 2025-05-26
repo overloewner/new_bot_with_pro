@@ -1,5 +1,5 @@
 # main.py
-"""Исправленное главное приложение с корректными импортами."""
+"""Исправленное главное приложение."""
 
 import asyncio
 import signal
@@ -36,13 +36,13 @@ logger = logging.getLogger(__name__)
 
 
 class ModularCryptoBot:
-    """Главное приложение с исправленными импортами и полной функциональностью."""
+    """Главное приложение с исправленными импортами."""
     
     def __init__(self):
         self.config = get_config()
         self.running = False
         
-        # Event Bus (создаем новый экземпляр)
+        # Event Bus
         self.event_bus = EventBus()
         
         # Сервисы
@@ -76,7 +76,7 @@ class ModularCryptoBot:
             asyncio.create_task(self.stop())
     
     async def initialize(self) -> None:
-        """Инициализация всех модулей с error handling."""
+        """Инициализация всех модулей."""
         logger.info("🚀 Initializing Modular Crypto Bot v2.0...")
         
         try:
@@ -107,10 +107,6 @@ class ModularCryptoBot:
         
         try:
             await self.event_bus.start()
-            
-            # Настраиваем middleware для мониторинга
-            self.event_bus.add_middleware(self._event_monitor_middleware)
-            
             logger.info("✅ Event Bus initialized")
             
         except Exception as e:
@@ -211,19 +207,6 @@ class ModularCryptoBot:
         
         logger.info("✅ Module connections established")
     
-    async def _event_monitor_middleware(self, event: Event) -> None:
-        """Middleware для мониторинга событий."""
-        logger.debug(f"Event: {event.type} from {event.source_module}")
-        
-        # Обновляем статистику событий
-        try:
-            cache = cache_manager.get_cache('system_stats')
-            stats_key = f"events:{event.type}"
-            current_count = await cache.get(stats_key, 0)
-            await cache.set(stats_key, current_count + 1, ttl=3600)
-        except Exception:
-            pass  # Не критично если не удалось обновить статистику
-    
     async def _on_module_started(self, event: Event) -> None:
         """Обработка события запуска модуля."""
         module_name = event.data.get("module", "unknown")
@@ -299,7 +282,7 @@ class ModularCryptoBot:
             logger.error(f"❌ Failed to restart module '{module_name}': {e}")
     
     async def start(self) -> None:
-        """Запуск всех модулей с отказоустойчивостью."""
+        """Запуск всех модулей."""
         if self.running:
             return
         
@@ -307,7 +290,7 @@ class ModularCryptoBot:
         self.running = True
         
         try:
-            # Запускаем модули в правильном порядке с error handling
+            # Запускаем модули в правильном порядке
             await self._start_core_modules()
             await self._start_feature_modules()
             await self._start_telegram_service()
@@ -403,7 +386,6 @@ class ModularCryptoBot:
                 
             except Exception as e:
                 logger.error(f"❌ Failed to start Telegram service: {e}")
-                # Не останавливаем приложение если Telegram не запустился
     
     async def _wait_for_shutdown(self) -> None:
         """Ожидание сигнала завершения."""
@@ -550,13 +532,6 @@ class ModularCryptoBot:
                     db_healthy = await self.db_manager.health_check()
                     if not db_healthy:
                         logger.warning("⚠️ Database health check failed")
-                
-                # Проверяем память кешей
-                cache_stats = cache_manager.get_all_stats()
-                for cache_name, stats in cache_stats.items():
-                    memory_usage = stats.get('memory_usage_percent', 0)
-                    if memory_usage > 90:
-                        logger.warning(f"⚠️ Cache '{cache_name}' memory usage high: {memory_usage}%")
                 
                 # Публикуем событие проверки здоровья
                 await self.event_bus.publish(Event(

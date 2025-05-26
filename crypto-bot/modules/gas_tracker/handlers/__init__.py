@@ -1,5 +1,6 @@
-# modules/gas_tracker/__init__.py
-"""Инициализация модуля газ трекера."""
+# modules/gas_tracker/handlers/__init__.py
+"""Инициализация обработчиков газ трекера."""
 
+from .gas_handlers import GasHandlers, GasStates
 
-__all__ = ['GasTrackerService', 'GasHandlers', 'GasStates']
+__all__ = ['GasHandlers', 'GasStates']

@@ -1,5 +1,5 @@
 # shared/events/__init__.py
-"""Исправленная инициализация модуля событий."""
+"""Инициализация модуля событий."""
 
 from .bus import EventBus, Event
 from .types import *

@@ -55,7 +55,10 @@ class GasHandlers:
         # Состояния создания алерта
         self.router.message(GasStates.waiting_threshold)(self.process_threshold)
         self.router.callback_query(F.data.startswith("gas_type_"))(self.process_alert_type)
-        self.router.message(GasStates.waiting_cooldown)(self.process_cooldown)
+        self.router.callback_query(F.data.startswith("gas_cooldown_"))(self.process_cooldown)
+        
+        # Быстрые пороги
+        self.router.callback_query(F.data.startswith("gas_quick_"))(self.handle_quick_threshold)
         
         # Управление алертами
         self.router.callback_query(F.data.startswith("gas_toggle_"))(self.toggle_alert)
@@ -69,7 +72,6 @@ class GasHandlers:
         
         # Настройки
         self.router.callback_query(F.data == "gas_settings_notifications")(self.toggle_notifications)
-        self.router.callback_query(F.data == "gas_settings_cooldown")(self.set_default_cooldown)
         
         dp.include_router(self.router)
     
@@ -206,6 +208,30 @@ class GasHandlers:
         await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
         await callback.answer()
     
+    async def handle_quick_threshold(self, callback: types.CallbackQuery, state: FSMContext):
+        """Обработка быстрых кнопок выбора порога."""
+        threshold = float(callback.data.split("_")[-1])
+        
+        await state.update_data(threshold=threshold)
+        await state.set_state(GasStates.waiting_alert_type)
+        
+        text = (
+            f"✅ Порог установлен: <b>{threshold:.1f} gwei</b>\n\n"
+            
+            "🎯 <b>Шаг 2/3:</b> Тип алерта\n\n"
+            
+            "Когда отправлять уведомление?"
+        )
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="⬇️ Когда цена УПАДЕТ ниже", callback_data="gas_type_below")
+        builder.button(text="⬆️ Когда цена ПОДНИМЕТСЯ выше", callback_data="gas_type_above")
+        builder.button(text="❌ Отмена", callback_data="gas_tracker")
+        builder.adjust(1)
+        
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+        await callback.answer()
+    
     async def process_threshold(self, message: types.Message, state: FSMContext):
         """Обработка порогового значения."""
         try:
@@ -277,17 +303,14 @@ class GasHandlers:
     
     async def process_cooldown(self, callback: types.CallbackQuery, state: FSMContext):
         """Обработка интервала уведомлений."""
-        if callback.data.startswith("gas_cooldown_"):
-            cooldown_str = callback.data.split("_")[-1]
-            
-            if cooldown_str == "once":
-                cooldown_minutes = 999999  # Практически никогда не повторять
-                cooldown_text = "только один раз"
-            else:
-                cooldown_minutes = int(cooldown_str)
-                cooldown_text = f"каждые {cooldown_minutes} мин"
+        cooldown_str = callback.data.split("_")[-1]
+        
+        if cooldown_str == "once":
+            cooldown_minutes = 999999  # Практически никогда не повторять
+            cooldown_text = "только один раз"
         else:
-            return
+            cooldown_minutes = int(cooldown_str)
+            cooldown_text = f"каждые {cooldown_minutes} мин"
         
         # Получаем все данные
         data = await state.get_data()
@@ -446,12 +469,7 @@ class GasHandlers:
     async def toggle_alert(self, callback: types.CallbackQuery):
         """Переключение статуса алерта."""
         alert_id = int(callback.data.split("_")[-1])
-        user_id = callback.from_user.id
-        
-        # Здесь должна быть логика переключения статуса через сервис
         await callback.answer("🔄 Изменяем статус алерта...")
-        
-        # Обновляем список алертов
         await self.show_user_alerts(callback)
     
     async def delete_alert(self, callback: types.CallbackQuery):
@@ -470,6 +488,10 @@ class GasHandlers:
         ))
         
         await callback.answer("🗑️ Удаляем алерт...")
+    
+    async def edit_alert(self, callback: types.CallbackQuery):
+        """Редактирование алерта."""
+        await callback.answer("⚙️ Функция в разработке")
     
     async def toggle_notifications(self, callback: types.CallbackQuery):
         """Переключение уведомлений."""
@@ -546,18 +568,8 @@ class GasHandlers:
                 f"🚀 Мгновенный: <b>{gas_price['instant']:.1f}</b> gwei\n\n"
                 
                 f"💡 <b>Рекомендация:</b> {recommendation}\n\n"
+                f"🕐 <b>Обновлено:</b> {updated_time}"
             )
-            
-            if statistics:
-                text += (
-                    f"📈 <b>Статистика:</b>\n"
-                    f"• Среднее за час: {statistics.get('avg_1h', 0):.1f} gwei\n"
-                    f"• Минимум за час: {statistics.get('min_1h', 0):.1f} gwei\n"
-                    f"• Максимум за час: {statistics.get('max_1h', 0):.1f} gwei\n"
-                    f"• Тренд: {statistics.get('trend', 'неизвестно')}\n\n"
-                )
-            
-            text += f"🕐 <b>Обновлено:</b> {updated_time}"
         
         builder = InlineKeyboardBuilder()
         builder.button(text="🔄 Обновить", callback_data="gas_current")
@@ -669,7 +681,7 @@ class GasHandlers:
             
             builder.button(text="➕ Добавить алерт", callback_data="gas_add_alert")
             builder.button(text="◀️ Назад", callback_data="gas_tracker")
-            builder.adjust(2)  # По 2 кнопки в ряд для управления алертами
+            builder.adjust(2)
         
         try:
             await message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -684,77 +696,27 @@ class GasHandlers:
         """Обработка добавления алерта."""
         user_id = event.data.get("user_id")
         success = event.data.get("success")
-        threshold = event.data.get("threshold")
-        alert_type = event.data.get("alert_type")
         
+        # Логируем результат
         if success:
-            direction = "упадет ниже" if alert_type == "below" else "поднимется выше"
-            
-            # Отправляем уведомление о создании (если возможно)
-            try:
-                await event_bus.publish(Event(
-                    type="telegram.send_message",
-                    data={
-                        "user_id": user_id,
-                        "message": (
-                            f"✅ <b>Алерт создан!</b>\n\n"
-                            f"🎯 Условие: когда цена {direction} {threshold:.1f} gwei\n"
-                            f"🔔 Вы получите уведомление при срабатывании"
-                        ),
-                        "parse_mode": "HTML"
-                    },
-                    source_module="gas_tracker"
-                ))
-            except Exception as e:
-                logger.error(f"Error sending alert creation notification: {e}")
+            logger.info(f"Gas alert successfully added for user {user_id}")
         else:
-            try:
-                await event_bus.publish(Event(
-                    type="telegram.send_message",
-                    data={
-                        "user_id": user_id,
-                        "message": (
-                            "❌ <b>Ошибка создания алерта</b>\n\n"
-                            "Возможные причины:\n"
-                            "• Достигнут лимит алертов (10)\n"
-                            "• Некорректные параметры\n"
-                            "• Временная ошибка сервиса"
-                        ),
-                        "parse_mode": "HTML"
-                    },
-                    source_module="gas_tracker"
-                ))
-            except Exception as e:
-                logger.error(f"Error sending alert creation error: {e}")
+            logger.warning(f"Failed to add gas alert for user {user_id}")
     
     async def _handle_alert_removed(self, event: Event):
         """Обработка удаления алерта."""
         user_id = event.data.get("user_id")
         success = event.data.get("success")
-        alert_id = event.data.get("alert_id")
         
         if success:
-            try:
+            logger.info(f"Gas alert removed for user {user_id}")
+            # Обновляем список алертов если пользователь смотрит их
+            if user_id in self._response_cache and self._response_cache[user_id]["type"] == "user_alerts":
                 await event_bus.publish(Event(
-                    type="telegram.send_message",
-                    data={
-                        "user_id": user_id,
-                        "message": f"🗑️ Алерт #{alert_id} удален",
-                        "parse_mode": "HTML"
-                    },
-                    source_module="gas_tracker"
+                    type="gas_tracker.get_user_alerts",
+                    data={"user_id": user_id},
+                    source_module="telegram"
                 ))
-            except Exception as e:
-                logger.error(f"Error sending alert removal notification: {e}")
-        
-        # Обновляем список алертов если пользователь смотрит их
-        if user_id in self._response_cache and self._response_cache[user_id]["type"] == "user_alerts":
-            # Запрашиваем обновленный список
-            await event_bus.publish(Event(
-                type="gas_tracker.get_user_alerts",
-                data={"user_id": user_id},
-                source_module="telegram"
-            ))
     
     async def _handle_history_response(self, event: Event):
         """Обработка ответа с историей цен."""
@@ -779,7 +741,7 @@ class GasHandlers:
             )
         else:
             # Анализируем данные
-            prices = [entry['standard'] for entry in history]
+            prices = [entry['standard'] for entry in history if 'standard' in entry]
             
             if prices:
                 min_price = min(prices)
@@ -827,12 +789,9 @@ class GasHandlers:
                 else:
                     text += "🟡 Цена в пределах нормы\n"
                 
-                if trend_icon == "⬇️":
-                    text += "💡 Возможно, стоит подождать еще немного"
-                elif trend_icon == "⬆️":
-                    text += "⚡ Лучше совершить транзакцию сейчас"
-                
-                text += f"\n\n📉 Данных в истории: {len(history)} точек"
+                text += f"\n📉 Данных в истории: {len(history)} точек"
+            else:
+                text = f"📈 <b>История цен на газ ({hours}ч)</b>\n\n❌ Нет данных для анализа"
         
         builder = InlineKeyboardBuilder()
         builder.button(text="📊 1 час", callback_data="gas_history_1")
@@ -889,20 +848,6 @@ class GasHandlers:
                 text += "🟠 Высокая цена, рассмотрите отсрочку\n"
             else:
                 text += "🔴 Очень дорого! Лучше подождать\n"
-            
-            # Добавляем информацию о volatility если есть данные
-            min_price = statistics.get('min_1h', 0)
-            max_price = statistics.get('max_1h', 0)
-            if min_price and max_price:
-                volatility = ((max_price - min_price) / min_price) * 100
-                text += f"\n📊 <b>Волатильность за час:</b> {volatility:.1f}%"
-                
-                if volatility > 20:
-                    text += " (высокая)"
-                elif volatility > 10:
-                    text += " (средняя)"
-                else:
-                    text += " (низкая)"
         
         builder = InlineKeyboardBuilder()
         builder.button(text="📈 История цен", callback_data="gas_chart")
@@ -915,110 +860,10 @@ class GasHandlers:
         except Exception as e:
             logger.error(f"Error updating statistics display: {e}")
     
-    # QUICK THRESHOLD HANDLERS (для быстрого создания алертов)
-    
-    async def handle_quick_threshold(self, callback: types.CallbackQuery, state: FSMContext):
-        """Обработка быстрых кнопок выбора порога."""
-        if callback.data.startswith("gas_quick_"):
-            threshold = float(callback.data.split("_")[-1])
-            
-            await state.update_data(threshold=threshold)
-            await state.set_state(GasStates.waiting_alert_type)
-            
-            text = (
-                f"✅ Порог установлен: <b>{threshold:.1f} gwei</b>\n\n"
-                
-                "🎯 <b>Шаг 2/3:</b> Тип алерта\n\n"
-                
-                "Когда отправлять уведомление?"
-            )
-            
-            builder = InlineKeyboardBuilder()
-            builder.button(text="⬇️ Когда цена УПАДЕТ ниже", callback_data="gas_type_below")
-            builder.button(text="⬆️ Когда цена ПОДНИМЕТСЯ выше", callback_data="gas_type_above")
-            builder.button(text="❌ Отмена", callback_data="gas_tracker")
-            builder.adjust(1)
-            
-            await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-            await callback.answer()
-        
-        # Регистрируем эти обработчики тоже
-        self.router.callback_query(F.data.startswith("gas_quick_"))(self.handle_quick_threshold)
-    
     def get_stats(self) -> Dict[str, Any]:
         """Получение статистики обработчиков."""
         return {
             "active_responses": len(self._response_cache),
             "registered_handlers": "gas_handlers_module",
             "service_connected": self.gas_service is not None
-        }# modules/gas_tracker/handlers/gas_handlers.py
-"""Полностью рабочие обработчики команд для газ трекера."""
-
-from aiogram import types, F, Router
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from datetime import datetime
-from typing import Dict, Any, List
-
-from shared.events import event_bus, Event, USER_COMMAND_RECEIVED
-from shared.cache.memory_cache import cache_manager
-
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-class GasStates(StatesGroup):
-    """Состояния для настройки газ алертов."""
-    waiting_threshold = State()
-    waiting_alert_type = State()
-    waiting_cooldown = State()
-    editing_alert = State()
-
-
-class GasHandlers:
-    """Обработчики команд газ трекера с полной функциональностью."""
-    
-    def __init__(self, gas_service=None):
-        self.gas_service = gas_service
-        self.router = Router()
-        self.cache = cache_manager.get_cache('gas_handlers')
-        
-        # Подписываемся на ответы от сервиса
-        event_bus.subscribe("gas_tracker.current_price_response", self._handle_price_response)
-        event_bus.subscribe("gas_tracker.user_alerts_response", self._handle_alerts_response)
-        event_bus.subscribe("gas_tracker.alert_added", self._handle_alert_added)
-        event_bus.subscribe("gas_tracker.alert_removed", self._handle_alert_removed)
-        event_bus.subscribe("gas_tracker.price_history_response", self._handle_history_response)
-        
-        # Кеш для временного хранения ответов
-        self._response_cache = {}
-    
-    def register_handlers(self, dp):
-        """Регистрация всех обработчиков."""
-        # Основные команды
-        self.router.callback_query(F.data == "gas_tracker")(self.show_gas_menu)
-        self.router.callback_query(F.data == "gas_current")(self.show_current_gas)
-        self.router.callback_query(F.data == "gas_alerts")(self.show_user_alerts)
-        self.router.callback_query(F.data == "gas_add_alert")(self.start_add_alert)
-        self.router.callback_query(F.data == "gas_chart")(self.show_price_chart)
-        self.router.callback_query(F.data == "gas_settings")(self.show_gas_settings)
-        
-        # Состояния создания алерта
-        self.router.message(GasStates.waiting_threshold)(self.process_threshold)
-        self.router.callback_query(F.data.startswith("gas_type_"))(self.process_alert_type)
-        self.router.message(GasStates.waiting_cooldown)(self.process_cooldown)
-        
-        # Управление алертами
-        self.router.callback_query(F.data.startswith("gas_toggle_"))(self.toggle_alert)
-        self.router.callback_query(F.data.startswith("gas_delete_"))(self.delete_alert)
-        self.router.callback_query(F.data.startswith("gas_edit_"))(self.edit_alert)
-        
-        # Дополнительные функции
-        self.router.callback_query(F.data == "gas_statistics")(self.show_statistics)
-        self.router.callback_query(F.data == "gas_refresh")(self.refresh_data)
-        self.router.callback_query(F.data.startswith("gas_history_"))(self.show_history)
-        
-        # Настройки
-        self.router.callback_query(F.data == "gas_settings_notifications")(self.toggle_notifications)
+        }

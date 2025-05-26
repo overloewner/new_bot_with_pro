@@ -1,22 +1,30 @@
 # config/settings.py
-"""Конфигурация приложения с корректным получением API ключей."""
+"""Исправленная конфигурация приложения с корректным получением API ключей."""
 
 import os
 from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
 
-# Загружаем .env файл если он есть
-try:
-    from dotenv import load_dotenv
-    env_path = Path(__file__).parent.parent / '.env'
-    if env_path.exists():
-        load_dotenv(env_path)
+# Загружаем .env файл если он есть - ИСПРАВЛЕНО: убрана зависимость от dotenv
+env_path = Path(__file__).parent.parent / '.env'
+if env_path.exists():
+    try:
+        # Простой парсер .env файла без зависимостей
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and value:
+                        os.environ[key] = value
         print(f"✅ Loaded .env file from {env_path}")
-    else:
-        print(f"⚠️ .env file not found at {env_path}")
-except ImportError:
-    print("⚠️ python-dotenv not installed, using system environment variables")
+    except Exception as e:
+        print(f"⚠️ Error loading .env file: {e}")
+else:
+    print(f"⚠️ .env file not found at {env_path}")
 
 
 @dataclass
