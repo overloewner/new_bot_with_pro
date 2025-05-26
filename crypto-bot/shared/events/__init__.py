@@ -1,3 +1,5 @@
+# shared/events/__init__.py
+"""Исправленная инициализация модуля событий."""
 
 from .bus import EventBus, Event
 from .types import *
@@ -11,6 +13,7 @@ __all__ = [
     'event_bus',
     # Типы событий
     'PRICE_ALERT_TRIGGERED',
+    'PRICE_DATA_UPDATED',
     'CANDLE_PROCESSED', 
     'GAS_PRICE_UPDATED',
     'GAS_ALERT_TRIGGERED',
@@ -22,5 +25,8 @@ __all__ = [
     'MESSAGE_SENT',
     'MODULE_STARTED',
     'MODULE_STOPPED',
-    'ERROR_OCCURRED'
+    'ERROR_OCCURRED',
+    'HEALTH_CHECK',
+    'APPLICATION_STARTED',
+    'APPLICATION_STOPPED'
 ]
