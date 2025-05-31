@@ -1,4 +1,4 @@
-# modules/price_alerts/core/alert_dispatcher.py
+# modules/telegram/alert_dispatcher.py
 """Диспетчер алертов с батчингом и rate limiting."""
 
 import asyncio
@@ -7,15 +7,15 @@ from typing import Dict, Any, Set, List
 from collections import defaultdict, deque
 
 from shared.events import event_bus, Event
-from shared.utils.logger import get_module_logger
+import logging
 
-logger = get_module_logger("alert_dispatcher")
-
+logger = logging.getLogger(__name__)
 
 class AlertDispatcher:
     """Диспетчер для отправки алертов с оптимизацией."""
     
-    def __init__(self):
+    def __init__(self, telegram_service):
+        self.telegram_service = telegram_service
         self._running = False
         
         # Очереди для пользователей
@@ -26,17 +26,17 @@ class AlertDispatcher:
         
         # Rate limiting
         self._user_limits: Dict[int, deque] = defaultdict(
-            lambda: deque(maxlen=10)  # Последние 10 алертов
+            lambda: deque(maxlen=10)
         )
         
         # Cooldown для предотвращения дублирования
         self._cooldowns: Dict[str, float] = {}
-        self._cooldown_time = 60  # 1 минута
+        self._cooldown_time = 60
         
         # Конфигурация
         self.max_alerts_per_minute = 5
         self.batch_size = 3
-        self.batch_timeout = 2.0  # 2 секунды
+        self.batch_timeout = 2.0
         
         # Статистика
         self._stats = {
@@ -72,13 +72,13 @@ class AlertDispatcher:
         self._user_tasks.clear()
         logger.info("Alert dispatcher stopped")
     
-    async def dispatch_alert(self, alert_data: Dict[str, Any], user_presets: Dict[int, Set[str]]):
-        """Отправка алерта пользователям."""
+    async def dispatch_alert(self, user_id: int, message: str, alert_type: str = "info"):
+        """Отправка алерта пользователю."""
         if not self._running:
             return
         
         # Создаем ключ для cooldown
-        cooldown_key = f"{alert_data['symbol']}_{alert_data['interval']}_{alert_data['change_percent']}"
+        cooldown_key = f"{user_id}_{alert_type}_{hash(message[:50])}"
         
         # Проверяем cooldown
         if self._is_in_cooldown(cooldown_key):
@@ -88,14 +88,10 @@ class AlertDispatcher:
         # Устанавливаем cooldown
         self._cooldowns[cooldown_key] = time.time() + self._cooldown_time
         
-        # Формируем сообщение
-        message = self._format_alert_message(alert_data)
-        
-        # Отправляем каждому пользователю
-        for user_id, preset_ids in user_presets.items():
-            await self._queue_user_alert(user_id, message, preset_ids)
+        # Отправляем пользователю
+        await self._queue_user_alert(user_id, message, alert_type)
     
-    async def _queue_user_alert(self, user_id: int, message: str, preset_ids: Set[str]):
+    async def _queue_user_alert(self, user_id: int, message: str, alert_type: str):
         """Добавление алерта в очередь пользователя."""
         # Проверяем rate limit
         if not self._check_user_rate_limit(user_id):
@@ -106,7 +102,7 @@ class AlertDispatcher:
             # Добавляем в очередь пользователя
             await self._user_queues[user_id].put({
                 'message': message,
-                'preset_ids': preset_ids,
+                'alert_type': alert_type,
                 'timestamp': time.time()
             })
             
@@ -187,16 +183,8 @@ class AlertDispatcher:
             if len(message) > 4000:
                 message = message[:4000] + "\n... (обрезано)"
             
-            # Отправляем через event bus
-            await event_bus.publish(Event(
-                type="price_alert.triggered",
-                data={
-                    "user_id": user_id,
-                    "message": message,
-                    "alert_count": len(batch)
-                },
-                source_module="price_alerts"
-            ))
+            # Отправляем через telegram service
+            await self.telegram_service.send_message(user_id, message, parse_mode="HTML")
             
             self._stats['total_dispatched'] += len(batch)
             logger.debug(f"Sent {len(batch)} alerts to user {user_id}")
@@ -225,14 +213,6 @@ class AlertDispatcher:
         """Проверка cooldown."""
         cooldown_until = self._cooldowns.get(key, 0)
         return time.time() < cooldown_until
-    
-    def _format_alert_message(self, alert_data: Dict[str, Any]) -> str:
-        """Форматирование сообщения алерта."""
-        return (
-            f"{alert_data['direction']} {alert_data['symbol']} {alert_data['interval']}: "
-            f"{abs(alert_data['change_percent']):.2f}% "
-            f"(${alert_data['close']:.4f})"
-        )
     
     async def cleanup_user_queue(self, user_id: int):
         """Очистка очереди пользователя."""

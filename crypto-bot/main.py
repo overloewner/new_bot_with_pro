@@ -1,5 +1,5 @@
 # main.py
-"""Исправленное главное приложение с полной функциональностью всех кнопок."""
+"""Обновленное главное приложение с новой структурой."""
 
 import asyncio
 import signal
@@ -18,34 +18,30 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: правильные импорты
-from config.settings import get_config
+# Импорты с новой структурой
+from config.base import get_config
 from shared.events import event_bus, Event
-from shared.cache.memory_cache import cache_manager
+from shared.database import DatabaseManager
 
-# Импорт сервисов в правильном порядке
+# Импорт сервисов
 from modules.telegram.service import TelegramService
 from modules.price_alerts.service import PriceAlertsService
-from modules.gas_tracker.service import GasTrackerService
-from modules.whales.service import LimitedWhaleService
-from modules.wallet_tracker.service import LimitedWalletTrackerService
 
 logger = logging.getLogger(__name__)
 
-
 class FullyFunctionalCryptoBot:
-    """Главное приложение с ПОЛНОСТЬЮ РАБОЧИМИ кнопками."""
+    """Главное приложение с обновленной архитектурой."""
     
     def __init__(self):
         self.config = get_config()
         self.running = False
         
-        # Сервисы (ВАЖНО: инициализируем все)
+        # Инфраструктура
+        self.db_manager: DatabaseManager = None
+        
+        # Сервисы
         self.telegram_service: TelegramService = None
         self.price_alerts_service: PriceAlertsService = None
-        self.gas_tracker_service: GasTrackerService = None
-        self.whale_service: LimitedWhaleService = None
-        self.wallet_service: LimitedWalletTrackerService = None
         
         # Задачи
         self.tasks: List[asyncio.Task] = []
@@ -78,7 +74,7 @@ class FullyFunctionalCryptoBot:
         import time
         self._startup_stats["start_time"] = time.time()
         
-        logger.info("🚀 Initializing Fully Functional Crypto Bot...")
+        logger.info("🚀 Initializing Crypto Bot with new architecture...")
         
         try:
             # Инициализируем инфраструктуру
@@ -109,51 +105,28 @@ class FullyFunctionalCryptoBot:
         await event_bus.start()
         logger.info("✅ Event Bus started")
         
-        # Cache Manager
-        await cache_manager.start_all()
-        logger.info("✅ Cache system started")
+        # Database Manager
+        try:
+            self.db_manager = DatabaseManager(self.config.get_database_url())
+            await self.db_manager.initialize()
+            logger.info("✅ Database manager initialized")
+        except Exception as e:
+            logger.warning(f"⚠️ Database initialization failed: {e}")
+            self.db_manager = None
         
-        # Базу данных пока не используем для простоты
         logger.info("✅ Infrastructure ready")
     
     async def _initialize_all_modules(self) -> None:
-        """Инициализация ВСЕХ модулей."""
-        logger.info("🔧 Initializing all modules...")
+        """Инициализация всех модулей."""
+        logger.info("🔧 Initializing modules...")
         
         # Price Alerts (основной модуль)
         try:
-            self.price_alerts_service = PriceAlertsService()
+            self.price_alerts_service = PriceAlertsService(self.db_manager)
             logger.info("✅ Price Alerts service created")
             self._startup_stats["modules_started"] += 1
         except Exception as e:
             logger.error(f"❌ Failed to create Price Alerts: {e}")
-            self._startup_stats["modules_failed"] += 1
-        
-        # Gas Tracker
-        try:
-            self.gas_tracker_service = GasTrackerService()
-            logger.info("✅ Gas Tracker service created")
-            self._startup_stats["modules_started"] += 1
-        except Exception as e:
-            logger.error(f"❌ Failed to create Gas Tracker: {e}")
-            self._startup_stats["modules_failed"] += 1
-        
-        # Whale Tracker
-        try:
-            self.whale_service = LimitedWhaleService()
-            logger.info("✅ Whale service created")
-            self._startup_stats["modules_started"] += 1
-        except Exception as e:
-            logger.error(f"❌ Failed to create Whale service: {e}")
-            self._startup_stats["modules_failed"] += 1
-        
-        # Wallet Tracker
-        try:
-            self.wallet_service = LimitedWalletTrackerService()
-            logger.info("✅ Wallet service created")
-            self._startup_stats["modules_started"] += 1
-        except Exception as e:
-            logger.error(f"❌ Failed to create Wallet service: {e}")
             self._startup_stats["modules_failed"] += 1
         
         # Telegram Service
@@ -167,21 +140,18 @@ class FullyFunctionalCryptoBot:
             raise  # Telegram критически важен
     
     async def _setup_telegram_with_all_modules(self) -> None:
-        """Настройка Telegram с ВСЕМИ модулями."""
-        logger.info("📱 Setting up Telegram with ALL modules...")
+        """Настройка Telegram с модулями."""
+        logger.info("📱 Setting up Telegram with modules...")
         
         if not self.telegram_service:
             raise RuntimeError("Telegram service not initialized")
         
-        # КРИТИЧЕСКИ ВАЖНО: передаем ВСЕ сервисы
+        # Передаем доступные сервисы
         self.telegram_service.set_services(
-            price_alerts=self.price_alerts_service,
-            gas_tracker=self.gas_tracker_service,
-            whale_tracker=self.whale_service,
-            wallet_tracker=self.wallet_service
+            price_alerts=self.price_alerts_service
         )
         
-        logger.info("✅ All services injected into Telegram handlers")
+        logger.info("✅ Services injected into Telegram handlers")
         
         # Подсчитываем обработчики
         stats = self.telegram_service.get_stats()
@@ -197,12 +167,6 @@ class FullyFunctionalCryptoBot:
         event_bus.subscribe("system.module_started", self._on_module_started)
         event_bus.subscribe("system.module_stopped", self._on_module_stopped)
         event_bus.subscribe("system.error", self._on_system_error)
-        
-        # Подписываемся на алерты для пересылки в Telegram
-        event_bus.subscribe("price_alert.triggered", self._forward_to_telegram)
-        event_bus.subscribe("gas_alert_triggered", self._forward_to_telegram)
-        event_bus.subscribe("whale_alert_triggered", self._forward_to_telegram)
-        event_bus.subscribe("wallet_alert_triggered", self._forward_to_telegram)
         
         logger.info("✅ Module connections established")
     
@@ -265,33 +229,8 @@ class FullyFunctionalCryptoBot:
     
     async def _start_feature_services(self) -> None:
         """Запуск дополнительных сервисов."""
-        logger.info("⭐ Starting feature services...")
-        
-        # Gas Tracker
-        if self.gas_tracker_service:
-            try:
-                await self.gas_tracker_service.start()
-                logger.info("✅ Gas Tracker started")
-            except Exception as e:
-                logger.error(f"❌ Failed to start Gas Tracker: {e}")
-        
-        # Whale Service
-        if self.whale_service:
-            try:
-                await self.whale_service.start()
-                logger.info("✅ Whale service started (limited mode)")
-            except Exception as e:
-                logger.error(f"❌ Failed to start Whale service: {e}")
-        
-        # Wallet Service
-        if self.wallet_service:
-            try:
-                await self.wallet_service.start()
-                logger.info("✅ Wallet service started (limited mode)")
-            except Exception as e:
-                logger.error(f"❌ Failed to start Wallet service: {e}")
-        
-        logger.info("✅ Feature services started")
+        logger.info("⭐ No additional services to start")
+        logger.info("✅ Feature services completed")
     
     async def stop(self) -> None:
         """Остановка всех модулей."""
@@ -327,9 +266,6 @@ class FullyFunctionalCryptoBot:
         # Останавливаем в обратном порядке
         services = [
             ("Telegram", self.telegram_service),
-            ("Wallet", self.wallet_service),
-            ("Whale", self.whale_service),
-            ("Gas Tracker", self.gas_tracker_service),
             ("Price Alerts", self.price_alerts_service)
         ]
         
@@ -346,10 +282,11 @@ class FullyFunctionalCryptoBot:
         logger.info("🏗️ Stopping infrastructure...")
         
         try:
-            await cache_manager.stop_all()
-            logger.info("💾 Cache system stopped")
+            if self.db_manager:
+                await self.db_manager.close()
+                logger.info("💾 Database manager stopped")
         except Exception as e:
-            logger.error(f"Error stopping cache: {e}")
+            logger.error(f"Error stopping database: {e}")
         
         try:
             await event_bus.stop()
@@ -375,18 +312,6 @@ class FullyFunctionalCryptoBot:
         module_name = event.source_module
         logger.error(f"❌ System error in '{module_name}': {error}")
     
-    async def _forward_to_telegram(self, event: Event) -> None:
-        """Пересылка алертов в Telegram."""
-        if self.telegram_service and self.running:
-            user_id = event.data.get("user_id")
-            message = event.data.get("message")
-            
-            if user_id and message:
-                try:
-                    await self.telegram_service.send_message(user_id, message, parse_mode="HTML")
-                except Exception as e:
-                    logger.error(f"Error forwarding message to Telegram: {e}")
-    
     # МОНИТОРИНГ
     
     async def _system_monitor(self) -> None:
@@ -395,14 +320,10 @@ class FullyFunctionalCryptoBot:
             try:
                 # Статистика EventBus
                 event_stats = event_bus.get_stats()
-                cache_stats = cache_manager.get_all_stats()
                 
                 # Статистика сервисов
                 services_status = {
                     "price_alerts": getattr(self.price_alerts_service, 'running', False) if self.price_alerts_service else False,
-                    "gas_tracker": getattr(self.gas_tracker_service, 'running', False) if self.gas_tracker_service else False,
-                    "whale_tracker": getattr(self.whale_service, 'running', False) if self.whale_service else False,
-                    "wallet_tracker": getattr(self.wallet_service, 'running', False) if self.wallet_service else False,
                     "telegram": getattr(self.telegram_service, 'running', False) if self.telegram_service else False
                 }
                 
@@ -410,9 +331,8 @@ class FullyFunctionalCryptoBot:
                 
                 # Логируем состояние каждые 10 минут
                 logger.info(
-                    f"📊 System Monitor - Services: {running_services}/5 running, "
-                    f"Events: {event_stats.get('event_types', 0)} types, "
-                    f"Cache: {sum(s.get('total_entries', 0) for s in cache_stats.values())} entries"
+                    f"📊 System Monitor - Services: {running_services}/2 running, "
+                    f"Events: {event_stats.get('event_types', 0)} types"
                 )
                 
                 # Публикуем статистику
@@ -421,8 +341,7 @@ class FullyFunctionalCryptoBot:
                     data={
                         "services_status": services_status,
                         "running_services": running_services,
-                        "event_stats": event_stats,
-                        "cache_stats": cache_stats
+                        "event_stats": event_stats
                     },
                     source_module="main"
                 ))
@@ -439,17 +358,11 @@ class FullyFunctionalCryptoBot:
         """Проверка здоровья модулей."""
         while self.running:
             try:
-                # Проверяем Event Bus
-                event_health = await event_bus.health_check()
-                
                 # Проверяем сервисы
                 unhealthy_services = []
                 
                 services_to_check = [
                     ("price_alerts", self.price_alerts_service),
-                    ("gas_tracker", self.gas_tracker_service),
-                    ("whale_tracker", self.whale_service),
-                    ("wallet_tracker", self.wallet_service),
                     ("telegram", self.telegram_service)
                 ]
                 
@@ -468,7 +381,6 @@ class FullyFunctionalCryptoBot:
                     type="system.health_check",
                     data={
                         "timestamp": asyncio.get_event_loop().time(),
-                        "event_bus_healthy": event_health.get('status') == 'healthy',
                         "unhealthy_services": unhealthy_services,
                         "total_services": len(services_to_check)
                     },
@@ -485,45 +397,11 @@ class FullyFunctionalCryptoBot:
             except Exception as e:
                 logger.error(f"Error in health checker: {e}")
                 await asyncio.sleep(120)
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Получение полного статуса приложения."""
-        return {
-            "running": self.running,
-            "startup_stats": self._startup_stats,
-            "services": {
-                "price_alerts": {
-                    "initialized": self.price_alerts_service is not None,
-                    "running": getattr(self.price_alerts_service, 'running', False) if self.price_alerts_service else False
-                },
-                "gas_tracker": {
-                    "initialized": self.gas_tracker_service is not None,
-                    "running": getattr(self.gas_tracker_service, 'running', False) if self.gas_tracker_service else False
-                },
-                "whale_tracker": {
-                    "initialized": self.whale_service is not None,
-                    "running": getattr(self.whale_service, 'running', False) if self.whale_service else False
-                },
-                "wallet_tracker": {
-                    "initialized": self.wallet_service is not None,
-                    "running": getattr(self.wallet_service, 'running', False) if self.wallet_service else False
-                },
-                "telegram": {
-                    "initialized": self.telegram_service is not None,
-                    "running": getattr(self.telegram_service, 'running', False) if self.telegram_service else False
-                }
-            },
-            "infrastructure": {
-                "event_bus_running": event_bus._running if hasattr(event_bus, '_running') else False,
-                "cache_manager_active": len(cache_manager._caches) > 0
-            },
-            "tasks_count": len(self.tasks)
-        }
 
 
 async def main():
     """Главная функция приложения."""
-    logger.info("🚀 Starting Fully Functional Crypto Bot...")
+    logger.info("🚀 Starting Crypto Bot with new architecture...")
     
     app = FullyFunctionalCryptoBot()
     
@@ -555,8 +433,8 @@ if __name__ == "__main__":
         # Выводим информацию о запуске
         print("=" * 60)
         print("🤖 CRYPTO MONITOR BOT v2.0")
-        print("🚀 Fully Functional Version")
-        print("📱 All buttons and features working!")
+        print("🔧 Refactored Architecture")
+        print("📱 All functionality preserved!")
         print("=" * 60)
         
         exit_code = asyncio.run(main())

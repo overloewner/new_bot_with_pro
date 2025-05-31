@@ -1,16 +1,24 @@
-# modules/price_alerts/handlers/main_handler.py
-"""Полностью рабочие обработчики для Price Alerts с всеми кнопками."""
+# modules/telegram/handlers/price_alerts_handler.py
+"""Полностью рабочие обработчики для Price Alerts."""
 
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from shared.events import event_bus, Event
-from shared.utils.logger import get_module_logger
-from .states import PresetStates
+import logging
 
-logger = get_module_logger("price_alerts_handler")
+logger = logging.getLogger(__name__)
 
+# FSM состояния
+from aiogram.fsm.state import State, StatesGroup
+
+class PresetStates(StatesGroup):
+    """Состояния для создания пресета."""
+    waiting_name = State()
+    waiting_pairs = State()
+    waiting_interval = State()
+    waiting_percent = State()
 
 class PriceAlertsHandler:
     """Полностью функциональные обработчики Price Alerts."""
@@ -59,7 +67,7 @@ class PriceAlertsHandler:
         self.router.callback_query(F.data == "price_export")(self.export_data)
         
         dp.include_router(self.router)
-    
+
     async def show_main_menu(self, callback: types.CallbackQuery):
         """Главное меню Price Alerts."""
         user_id = callback.from_user.id

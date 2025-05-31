@@ -1,5 +1,5 @@
 # modules/price_alerts/service.py
-"""Полностью рабочий сервис ценовых алертов с кешированием и отказоустойчивостью."""
+"""Обновленный сервис ценовых алертов с репозиторием."""
 
 import asyncio
 import aiohttp
@@ -12,11 +12,10 @@ from collections import defaultdict, deque
 import logging
 
 from shared.events import event_bus, Event, PRICE_ALERT_TRIGGERED, PRICE_DATA_UPDATED
-from shared.cache.memory_cache import cache_manager, cached
 from shared.utils.rate_limiter import get_rate_limiter
+from .repository import PriceAlertsRepository
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class PriceData:
@@ -40,7 +39,6 @@ class PriceData:
             'source': self.source
         }
 
-
 @dataclass
 class PriceAlert:
     """Ценовой алерт."""
@@ -58,7 +56,6 @@ class PriceAlert:
     cooldown_minutes: int = 15
     min_volume: Optional[float] = None
 
-
 @dataclass
 class PricePreset:
     """Пресет для группы алертов."""
@@ -72,29 +69,24 @@ class PricePreset:
     created_at: datetime = field(default_factory=datetime.utcnow)
     alerts: List[PriceAlert] = field(default_factory=list)
 
-
 class PriceAlertsService:
     """
-    Полнофункциональный сервис ценовых алертов с:
-    - Реальным мониторингом цен
-    - Кешированием
-    - Rate limiting
-    - Отказоустойчивостью
-    - Поддержкой пресетов
+    Обновленный сервис ценовых алертов с репозиторием.
     """
     
-    def __init__(self):
+    def __init__(self, db_manager=None):
         self.running = False
         self._session: Optional[aiohttp.ClientSession] = None
+        
+        # Репозиторий для данных
+        self.repository = PriceAlertsRepository(db_manager)
         
         # Данные
         self._current_prices: Dict[str, PriceData] = {}
         self._price_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1440))  # 24 часа по минутам
         self._alerts: Dict[int, List[PriceAlert]] = {}
-        self._presets: Dict[int, List[PricePreset]] = {}
         
-        # Кеш и rate limiting
-        self.cache = cache_manager.get_cache('price_alerts')
+        # Rate limiting
         self.rate_limiter = get_rate_limiter('binance_free')
         
         # Настройки мониторинга
@@ -137,6 +129,8 @@ class PriceAlertsService:
         event_bus.subscribe("price_alerts.get_current_prices", self._handle_get_current_prices)
         event_bus.subscribe("price_alerts.add_symbol_monitoring", self._handle_add_monitoring)
         event_bus.subscribe("price_alerts.get_statistics", self._handle_get_statistics)
+        event_bus.subscribe("price_alerts.activate_preset", self._handle_activate_preset)
+        event_bus.subscribe("price_alerts.deactivate_preset", self._handle_deactivate_preset)
     
     async def start(self) -> None:
         """Запуск сервиса."""
@@ -151,11 +145,8 @@ class PriceAlertsService:
             connector=aiohttp.TCPConnector(limit=100, limit_per_host=20)
         )
         
-        # Запускаем кеш
-        await self.cache.start()
-        
-        # Загружаем данные из кеша
-        await self._load_from_cache()
+        # Загружаем данные из репозитория
+        await self._load_from_repository()
         
         # Запускаем мониторинг популярных пар
         self.monitored_symbols.update(self.popular_symbols)
@@ -163,7 +154,6 @@ class PriceAlertsService:
         # Запускаем фоновые задачи
         asyncio.create_task(self._monitor_prices())
         asyncio.create_task(self._cleanup_old_data())
-        asyncio.create_task(self._save_data_periodically())
         
         await event_bus.publish(Event(
             type="system.module_started",
@@ -177,15 +167,9 @@ class PriceAlertsService:
         """Остановка сервиса."""
         self.running = False
         
-        # Сохраняем данные
-        await self._save_to_cache()
-        
         # Закрываем сессию
         if self._session:
             await self._session.close()
-        
-        # Останавливаем кеш
-        await self.cache.stop()
         
         await event_bus.publish(Event(
             type="system.module_stopped",
@@ -194,6 +178,21 @@ class PriceAlertsService:
         ))
         
         logger.info("Price Alerts service stopped")
+    
+    async def _load_from_repository(self) -> None:
+        """Загрузка данных из репозитория."""
+        try:
+            # Загружаем активные пресеты для мониторинга
+            active_presets = await self.repository.get_active_presets_cache()
+            
+            # Добавляем символы в мониторинг
+            for preset_data in active_presets.values():
+                self.monitored_symbols.update(preset_data.get('symbols', []))
+            
+            logger.info(f"Loaded {len(active_presets)} active presets from repository")
+            
+        except Exception as e:
+            logger.error(f"Error loading from repository: {e}")
     
     async def _monitor_prices(self) -> None:
         """Основной цикл мониторинга цен."""
@@ -323,219 +322,74 @@ class PriceAlertsService:
             return False
     
     async def _check_all_alerts(self) -> None:
-        """Проверка всех пользовательских алертов."""
-        current_time = datetime.utcnow()
-        
-        for user_id, user_alerts in self._alerts.items():
-            for alert in user_alerts:
-                if not alert.is_active:
-                    continue
+        """Проверка всех активных пресетов на алерты."""
+        try:
+            # Получаем активные пресеты
+            active_presets = await self.repository.get_active_presets_cache()
+            
+            for preset_id, preset_data in active_presets.items():
+                user_id = preset_data['user_id']
                 
-                # Проверяем cooldown
-                if (alert.last_triggered and 
-                    current_time - alert.last_triggered < timedelta(minutes=alert.cooldown_minutes)):
-                    continue
-                
-                # Получаем текущую цену
-                price_data = self._current_prices.get(alert.symbol)
-                if not price_data:
-                    continue
-                
-                # Проверяем условие алерта
-                triggered = await self._check_alert_condition(alert, price_data)
-                
-                if triggered:
-                    await self._trigger_alert(user_id, alert, price_data)
+                for symbol in preset_data.get('symbols', []):
+                    price_data = self._current_prices.get(symbol)
+                    if not price_data:
+                        continue
+                    
+                    # Проверяем условие алерта
+                    change_percent = abs(price_data.change_percent_24h)
+                    if change_percent >= preset_data.get('percent_threshold', 0):
+                        await self._trigger_alert(user_id, preset_data, price_data)
+                        
+        except Exception as e:
+            logger.error(f"Error checking alerts: {e}")
     
-    async def _check_alert_condition(self, alert: PriceAlert, price_data: PriceData) -> bool:
-        """Проверка условия срабатывания алерта."""
-        # Проверяем минимальный объем если задан
-        if alert.min_volume and price_data.volume_24h < alert.min_volume:
-            return False
-        
-        current_price = price_data.price
-        
-        if alert.alert_type == "above":
-            return current_price >= alert.price_threshold
-        elif alert.alert_type == "below":
-            return current_price <= alert.price_threshold
-        elif alert.alert_type == "change_percent" and alert.percent_threshold:
-            return abs(price_data.change_percent_24h) >= alert.percent_threshold
-        
-        return False
-    
-    async def _trigger_alert(self, user_id: int, alert: PriceAlert, price_data: PriceData) -> None:
+    async def _trigger_alert(self, user_id: int, preset_data: Dict[str, Any], price_data: PriceData) -> None:
         """Срабатывание алерта."""
-        # Определяем направление
-        if alert.alert_type == "above":
-            direction = "⬆️"
-            condition = f"поднялась выше {alert.price_threshold:.8f}"
-        elif alert.alert_type == "below":
-            direction = "⬇️"
-            condition = f"упала ниже {alert.price_threshold:.8f}"
-        else:
-            direction = "📊"
-            condition = f"изменилась на {price_data.change_percent_24h:.2f}%"
-        
-        # Форматируем цену
-        if price_data.price >= 1:
-            price_str = f"{price_data.price:.2f}"
-        else:
-            price_str = f"{price_data.price:.8f}"
-        
-        change_icon = "🟢" if price_data.change_percent_24h > 0 else "🔴"
-        
-        message = (
-            f"{direction} <b>Price Alert!</b>\n\n"
-            
-            f"💰 <b>{alert.symbol}</b>\n"
-            f"💵 Цена: <b>${price_str}</b>\n"
-            f"📊 Условие: {condition}\n\n"
-            
-            f"📈 <b>Изменения за 24ч:</b>\n"
-            f"{change_icon} {price_data.change_percent_24h:+.2f}% (${price_data.change_24h:+.8f})\n"
-            f"📊 Объем: ${price_data.volume_24h:,.0f}\n\n"
-            
-            f"🕐 <b>Время:</b> {price_data.timestamp.strftime('%H:%M:%S')}"
-        )
-        
-        await event_bus.publish(Event(
-            type=PRICE_ALERT_TRIGGERED,
-            data={
-                "user_id": user_id,
-                "message": message,
-                "alert_id": alert.id,
-                "symbol": alert.symbol,
-                "current_price": price_data.price,
-                "alert_type": alert.alert_type,
-                "threshold": alert.price_threshold,
-                "change_percent": price_data.change_percent_24h
-            },
-            source_module="price_alerts"
-        ))
-        
-        # Обновляем статистику алерта
-        alert.last_triggered = datetime.utcnow()
-        alert.times_triggered += 1
-        self._stats['alerts_triggered'] += 1
-        
-        logger.info(f"Triggered price alert for user {user_id}: {alert.symbol} ${price_data.price}")
-    
-    async def _load_from_cache(self) -> None:
-        """Загрузка данных из кеша."""
         try:
-            # Загружаем алерты
-            cached_alerts = await self.cache.get('user_alerts', {})
-            for user_id_str, alerts_data in cached_alerts.items():
-                user_id = int(user_id_str)
-                self._alerts[user_id] = []
+            # Определяем направление
+            direction = "🟢" if price_data.change_percent_24h > 0 else "🔴"
+            
+            # Форматируем цену
+            if price_data.price >= 1:
+                price_str = f"{price_data.price:.2f}"
+            else:
+                price_str = f"{price_data.price:.8f}"
+            
+            change_icon = "🟢" if price_data.change_percent_24h > 0 else "🔴"
+            
+            message = (
+                f"{direction} <b>Price Alert!</b>\n\n"
                 
-                for alert_data in alerts_data:
-                    alert = PriceAlert(
-                        id=alert_data['id'],
-                        user_id=user_id,
-                        symbol=alert_data['symbol'],
-                        price_threshold=alert_data['price_threshold'],
-                        alert_type=alert_data['alert_type'],
-                        percent_threshold=alert_data.get('percent_threshold'),
-                        interval=alert_data.get('interval', '1h'),
-                        is_active=alert_data.get('is_active', True),
-                        created_at=datetime.fromisoformat(alert_data.get('created_at', datetime.utcnow().isoformat())),
-                        last_triggered=datetime.fromisoformat(alert_data['last_triggered']) if alert_data.get('last_triggered') else None,
-                        times_triggered=alert_data.get('times_triggered', 0),
-                        cooldown_minutes=alert_data.get('cooldown_minutes', 15),
-                        min_volume=alert_data.get('min_volume')
-                    )
-                    self._alerts[user_id].append(alert)
-                    
-                    # Добавляем символ в мониторинг
-                    self.monitored_symbols.add(alert.symbol)
-            
-            # Загружаем пресеты
-            cached_presets = await self.cache.get('user_presets', {})
-            for user_id_str, presets_data in cached_presets.items():
-                user_id = int(user_id_str)
-                self._presets[user_id] = []
+                f"💰 <b>{price_data.symbol}</b>\n"
+                f"💵 Цена: <b>${price_str}</b>\n"
+                f"📊 Пресет: {preset_data.get('name', 'Unknown')}\n\n"
                 
-                for preset_data in presets_data:
-                    preset = PricePreset(
-                        id=preset_data['id'],
-                        user_id=user_id,
-                        name=preset_data['name'],
-                        symbols=preset_data['symbols'],
-                        percent_threshold=preset_data['percent_threshold'],
-                        interval=preset_data['interval'],
-                        is_active=preset_data.get('is_active', True),
-                        created_at=datetime.fromisoformat(preset_data.get('created_at', datetime.utcnow().isoformat()))
-                    )
-                    self._presets[user_id].append(preset)
-                    
-                    # Добавляем символы в мониторинг
-                    self.monitored_symbols.update(preset.symbols)
+                f"📈 <b>Изменения за 24ч:</b>\n"
+                f"{change_icon} {price_data.change_percent_24h:+.2f}% (${price_data.change_24h:+.8f})\n"
+                f"📊 Объем: ${price_data.volume_24h:,.0f}\n\n"
+                
+                f"🕐 <b>Время:</b> {price_data.timestamp.strftime('%H:%M:%S')}"
+            )
             
-            # Загружаем историю цен
-            cached_history = await self.cache.get('price_history', {})
-            for symbol, history_data in cached_history.items():
-                self._price_history[symbol] = deque(history_data, maxlen=1440)
+            await event_bus.publish(Event(
+                type=PRICE_ALERT_TRIGGERED,
+                data={
+                    "user_id": user_id,
+                    "message": message,
+                    "preset_id": preset_data.get('id'),
+                    "symbol": price_data.symbol,
+                    "current_price": price_data.price,
+                    "change_percent": price_data.change_percent_24h
+                },
+                source_module="price_alerts"
+            ))
             
-            logger.info(f"Loaded {sum(len(alerts) for alerts in self._alerts.values())} alerts and {sum(len(presets) for presets in self._presets.values())} presets from cache")
+            self._stats['alerts_triggered'] += 1
+            
+            logger.info(f"Triggered price alert for user {user_id}: {price_data.symbol} ${price_data.price}")
             
         except Exception as e:
-            logger.error(f"Error loading from cache: {e}")
-    
-    async def _save_to_cache(self) -> None:
-        """Сохранение данных в кеш."""
-        try:
-            # Сохраняем алерты
-            alerts_data = {}
-            for user_id, alerts in self._alerts.items():
-                alerts_data[str(user_id)] = []
-                for alert in alerts:
-                    alert_dict = {
-                        'id': alert.id,
-                        'symbol': alert.symbol,
-                        'price_threshold': alert.price_threshold,
-                        'alert_type': alert.alert_type,
-                        'percent_threshold': alert.percent_threshold,
-                        'interval': alert.interval,
-                        'is_active': alert.is_active,
-                        'created_at': alert.created_at.isoformat(),
-                        'last_triggered': alert.last_triggered.isoformat() if alert.last_triggered else None,
-                        'times_triggered': alert.times_triggered,
-                        'cooldown_minutes': alert.cooldown_minutes,
-                        'min_volume': alert.min_volume
-                    }
-                    alerts_data[str(user_id)].append(alert_dict)
-            
-            await self.cache.set('user_alerts', alerts_data, ttl=86400)
-            
-            # Сохраняем пресеты
-            presets_data = {}
-            for user_id, presets in self._presets.items():
-                presets_data[str(user_id)] = []
-                for preset in presets:
-                    preset_dict = {
-                        'id': preset.id,
-                        'name': preset.name,
-                        'symbols': preset.symbols,
-                        'percent_threshold': preset.percent_threshold,
-                        'interval': preset.interval,
-                        'is_active': preset.is_active,
-                        'created_at': preset.created_at.isoformat()
-                    }
-                    presets_data[str(user_id)].append(preset_dict)
-            
-            await self.cache.set('user_presets', presets_data, ttl=86400)
-            
-            # Сохраняем историю цен (только последние данные)
-            history_data = {}
-            for symbol, history in self._price_history.items():
-                history_data[symbol] = list(history)[-720:]  # Последние 12 часов
-            
-            await self.cache.set('price_history', history_data, ttl=43200)  # 12 часов
-            
-        except Exception as e:
-            logger.error(f"Error saving to cache: {e}")
+            logger.error(f"Error triggering alert: {e}")
     
     async def _cleanup_old_data(self) -> None:
         """Фоновая очистка старых данных."""
@@ -558,196 +412,16 @@ class PriceAlertsService:
             except Exception as e:
                 logger.error(f"Error in cleanup: {e}")
     
-    async def _save_data_periodically(self) -> None:
-        """Периодическое сохранение данных."""
-        while self.running:
-            try:
-                await asyncio.sleep(300)  # Каждые 5 минут
-                await self._save_to_cache()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in periodic save: {e}")
-    
     # PUBLIC API METHODS
-    
-    async def create_preset(self, user_id: int, preset_data: Dict[str, Any]) -> Optional[int]:
-        """Создание пресета."""
-        try:
-            # Валидация
-            if not preset_data.get('name'):
-                logger.warning(f"Empty preset name for user {user_id}")
-                return None
-            
-            symbols = preset_data.get('symbols', [])
-            if not symbols or len(symbols) > 100:
-                logger.warning(f"Invalid symbols count for user {user_id}: {len(symbols)}")
-                return None
-            
-            percent_threshold = preset_data.get('percent_threshold', 0)
-            if percent_threshold <= 0 or percent_threshold > 100:
-                logger.warning(f"Invalid percent threshold for user {user_id}: {percent_threshold}")
-                return None
-            
-            # Проверяем лимит пресетов
-            if user_id in self._presets and len(self._presets[user_id]) >= 10:
-                logger.warning(f"Preset limit reached for user {user_id}")
-                return None
-            
-            # Создаем пресет
-            preset_id = int(time.time() * 1000) % 2147483647
-            preset = PricePreset(
-                id=preset_id,
-                user_id=user_id,
-                name=preset_data['name'],
-                symbols=symbols,
-                percent_threshold=percent_threshold,
-                interval=preset_data.get('interval', '1h')
-            )
-            
-            # Добавляем в список
-            if user_id not in self._presets:
-                self._presets[user_id] = []
-            
-            self._presets[user_id].append(preset)
-            
-            # Добавляем символы в мониторинг
-            self.monitored_symbols.update(symbols)
-            
-            # Создаем алерты для пресета
-            for symbol in symbols:
-                alert_id = int(time.time() * 1000000) % 2147483647
-                alert = PriceAlert(
-                    id=alert_id,
-                    user_id=user_id,
-                    symbol=symbol,
-                    price_threshold=0,  # Будет обновлено при проверке
-                    alert_type="change_percent",
-                    percent_threshold=percent_threshold,
-                    interval=preset.interval
-                )
-                
-                if user_id not in self._alerts:
-                    self._alerts[user_id] = []
-                
-                self._alerts[user_id].append(alert)
-                preset.alerts.append(alert)
-            
-            # Сохраняем
-            await self._save_to_cache()
-            
-            logger.info(f"Created preset {preset_id} for user {user_id} with {len(symbols)} symbols")
-            return preset_id
-            
-        except Exception as e:
-            logger.error(f"Error creating preset: {e}")
-            return None
-    
-    async def delete_preset(self, user_id: int, preset_id: int) -> bool:
-        """Удаление пресета."""
-        try:
-            if user_id not in self._presets:
-                return False
-            
-            # Находим пресет
-            preset = None
-            for p in self._presets[user_id]:
-                if p.id == preset_id:
-                    preset = p
-                    break
-            
-            if not preset:
-                return False
-            
-            # Удаляем связанные алерты
-            if user_id in self._alerts:
-                self._alerts[user_id] = [
-                    alert for alert in self._alerts[user_id]
-                    if alert not in preset.alerts
-                ]
-            
-            # Удаляем пресет
-            self._presets[user_id] = [
-                p for p in self._presets[user_id]
-                if p.id != preset_id
-            ]
-            
-            # Сохраняем
-            await self._save_to_cache()
-            
-            logger.info(f"Deleted preset {preset_id} for user {user_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error deleting preset: {e}")
-            return False
-    
-    async def add_single_alert(
-        self, 
-        user_id: int, 
-        symbol: str, 
-        price_threshold: float, 
-        alert_type: str = "above"
-    ) -> Optional[int]:
-        """Добавление одиночного алерта."""
-        try:
-            # Валидация
-            if price_threshold <= 0:
-                return None
-            
-            if alert_type not in ["above", "below", "change_percent"]:
-                return None
-            
-            # Проверяем лимит алертов
-            if user_id in self._alerts and len(self._alerts[user_id]) >= 50:
-                return None
-            
-            # Создаем алерт
-            alert_id = int(time.time() * 1000000) % 2147483647
-            alert = PriceAlert(
-                id=alert_id,
-                user_id=user_id,
-                symbol=symbol.upper(),
-                price_threshold=price_threshold,
-                alert_type=alert_type
-            )
-            
-            # Добавляем в список
-            if user_id not in self._alerts:
-                self._alerts[user_id] = []
-            
-            self._alerts[user_id].append(alert)
-            
-            # Добавляем в мониторинг
-            self.monitored_symbols.add(symbol.upper())
-            
-            # Сохраняем
-            await self._save_to_cache()
-            
-            logger.info(f"Added single alert {alert_id} for user {user_id}: {symbol} {alert_type} {price_threshold}")
-            return alert_id
-            
-        except Exception as e:
-            logger.error(f"Error adding single alert: {e}")
-            return None
     
     def get_user_presets(self, user_id: int) -> List[Dict[str, Any]]:
         """Получение пресетов пользователя."""
-        presets = self._presets.get(user_id, [])
-        return [
-            {
-                "id": preset.id,
-                "name": preset.name,
-                "symbols": preset.symbols,
-                "symbols_count": len(preset.symbols),
-                "percent_threshold": preset.percent_threshold,
-                "interval": preset.interval,
-                "is_active": preset.is_active,
-                "created_at": preset.created_at.isoformat(),
-                "alerts_count": len(preset.alerts)
-            }
-            for preset in presets
-        ]
+        # Используем асинхронную обертку для синхронного вызова
+        import asyncio
+        try:
+            return asyncio.create_task(self.repository.get_user_presets(user_id)).result()
+        except:
+            return []
     
     def get_user_alerts(self, user_id: int) -> List[Dict[str, Any]]:
         """Получение алертов пользователя."""
@@ -800,17 +474,14 @@ class PriceAlertsService:
     
     def get_statistics(self) -> Dict[str, Any]:
         """Получение статистики сервиса."""
+        # Получаем статистику репозитория
+        repo_stats = self.repository.get_cache_stats()
+        
         return {
             "running": self.running,
             "monitored_symbols": len(self.monitored_symbols),
             "current_prices_count": len(self._current_prices),
-            "total_users": len(self._alerts),
-            "total_alerts": sum(len(alerts) for alerts in self._alerts.values()),
-            "total_presets": sum(len(presets) for presets in self._presets.values()),
-            "active_alerts": sum(
-                len([a for a in alerts if a.is_active])
-                for alerts in self._alerts.values()
-            ),
+            "repository_stats": repo_stats,
             **self._stats
         }
     
@@ -823,7 +494,7 @@ class PriceAlertsService:
     async def _handle_get_user_presets(self, event: Event):
         """Обработка запроса пресетов пользователя."""
         user_id = event.data.get("user_id")
-        presets = self.get_user_presets(user_id)
+        presets = await self.repository.get_user_presets(user_id)
         
         await event_bus.publish(Event(
             type="price_alerts.user_presets_response",
@@ -839,7 +510,11 @@ class PriceAlertsService:
         user_id = event.data.get("user_id")
         preset_data = event.data.get("preset_data")
         
-        preset_id = await self.create_preset(user_id, preset_data)
+        preset_id = await self.repository.create_preset(user_id, preset_data)
+        
+        # Добавляем символы в мониторинг
+        if preset_id and preset_data.get("symbols"):
+            self.monitored_symbols.update(preset_data["symbols"])
         
         await event_bus.publish(Event(
             type="price_alerts.preset_created",
@@ -856,10 +531,44 @@ class PriceAlertsService:
         user_id = event.data.get("user_id")
         preset_id = event.data.get("preset_id")
         
-        success = await self.delete_preset(user_id, preset_id)
+        success = await self.repository.delete_preset(user_id, preset_id)
         
         await event_bus.publish(Event(
             type="price_alerts.preset_deleted",
+            data={
+                "user_id": user_id,
+                "preset_id": preset_id,
+                "success": success
+            },
+            source_module="price_alerts"
+        ))
+    
+    async def _handle_activate_preset(self, event: Event):
+        """Обработка активации пресета."""
+        user_id = event.data.get("user_id")
+        preset_id = event.data.get("preset_id")
+        
+        success = await self.repository.update_preset_status(user_id, preset_id, True)
+        
+        await event_bus.publish(Event(
+            type="price_alerts.preset_activated",
+            data={
+                "user_id": user_id,
+                "preset_id": preset_id,
+                "success": success
+            },
+            source_module="price_alerts"
+        ))
+    
+    async def _handle_deactivate_preset(self, event: Event):
+        """Обработка деактивации пресета."""
+        user_id = event.data.get("user_id")
+        preset_id = event.data.get("preset_id")
+        
+        success = await self.repository.update_preset_status(user_id, preset_id, False)
+        
+        await event_bus.publish(Event(
+            type="price_alerts.preset_deactivated",
             data={
                 "user_id": user_id,
                 "preset_id": preset_id,

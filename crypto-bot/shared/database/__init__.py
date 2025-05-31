@@ -1,19 +1,19 @@
-# shared/database/__init__.py
+# core/database/__init__.py
 """Инициализация модуля базы данных."""
 
 from .manager import DatabaseManager
-from .models import Base, User, PricePreset, GasAlert, WhaleAlert, WalletAlert, AlertLog, SystemStats  # ИСПРАВЛЕНИЕ: Изменено Preset на PricePreset
-from .repositories.base_repository import BaseRepository
+from .models import (
+    Base, User, PricePreset, GasAlert, 
+    WhaleAlert, WalletAlert, AlertLog
+)
 
 __all__ = [
     'DatabaseManager',
     'Base',
     'User',
-    'PricePreset',  # ИСПРАВЛЕНИЕ: Изменено с Preset на PricePreset
+    'PricePreset',
     'GasAlert',
     'WhaleAlert',
     'WalletAlert',
-    'AlertLog',
-    'SystemStats',
-    'BaseRepository'
+    'AlertLog'
 ]
